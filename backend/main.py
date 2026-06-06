@@ -62,11 +62,17 @@ class MedicationCreate(BaseModel):
 
 class SymptomCreate(BaseModel):
     date: str
-    pain: int = Field(..., ge=1, le=10)
-    dry_mouth: int = Field(..., ge=1, le=10)
-    swallowing_difficulty: int = Field(..., ge=1, le=10)
-    facial_numbness: int = Field(..., ge=1, le=10)
-    fatigue: int = Field(..., ge=1, le=10)
+    pain: Optional[int] = Field(None, ge=1, le=10)
+    pain_type: Optional[str] = None
+    pain_location: Optional[str] = None
+    fatigue: Optional[int] = Field(None, ge=1, le=10)
+    nausea: Optional[int] = Field(None, ge=1, le=10)
+    fever: Optional[int] = Field(None, ge=1, le=10)
+    vision: Optional[int] = Field(None, ge=1, le=10)
+    vision_type: Optional[str] = None
+    vision_location: Optional[str] = None
+    other: Optional[int] = Field(None, ge=1, le=10)
+    other_description: Optional[str] = None
     notes: Optional[str] = None
 
 class TimelineEventCreate(BaseModel):
@@ -171,9 +177,15 @@ def get_symptoms(conn: sqlite3.Connection = Depends(get_db)):
 def create_symptom(item: SymptomCreate, conn: sqlite3.Connection = Depends(get_db)):
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO symptoms (date, pain, dry_mouth, swallowing_difficulty, facial_numbness, fatigue, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (item.date, item.pain, item.dry_mouth, item.swallowing_difficulty, item.facial_numbness, item.fatigue, item.notes))
+        INSERT INTO symptoms (
+            date, pain, pain_type, pain_location, fatigue, nausea, fever, 
+            vision, vision_type, vision_location, other, other_description, notes
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        item.date, item.pain, item.pain_type, item.pain_location, item.fatigue, item.nausea, item.fever,
+        item.vision, item.vision_type, item.vision_location, item.other, item.other_description, item.notes
+    ))
     conn.commit()
     new_id = cursor.lastrowid
     return {"id": new_id, "message": "Symptom log saved"}

@@ -54,16 +54,28 @@ def init_db():
             )
             """)
             
+            # Check if symptoms table has old schema
+            cursor.execute("PRAGMA table_info(symptoms)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if columns and "dry_mouth" in columns:
+                cursor.execute("DROP TABLE symptoms")
+
             # 3. Symptoms Table
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS symptoms (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT NOT NULL, -- YYYY-MM-DD
                 pain INTEGER CHECK(pain BETWEEN 1 AND 10),
-                dry_mouth INTEGER CHECK(dry_mouth BETWEEN 1 AND 10),
-                swallowing_difficulty INTEGER CHECK(swallowing_difficulty BETWEEN 1 AND 10),
-                facial_numbness INTEGER CHECK(facial_numbness BETWEEN 1 AND 10),
+                pain_type TEXT,
+                pain_location TEXT,
                 fatigue INTEGER CHECK(fatigue BETWEEN 1 AND 10),
+                nausea INTEGER CHECK(nausea BETWEEN 1 AND 10),
+                fever INTEGER CHECK(fever BETWEEN 1 AND 10),
+                vision INTEGER CHECK(vision BETWEEN 1 AND 10),
+                vision_type TEXT,
+                vision_location TEXT,
+                other INTEGER CHECK(other BETWEEN 1 AND 10),
+                other_description TEXT,
                 notes TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
@@ -185,20 +197,21 @@ def seed_dummy_data():
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, medications)
             
-            # Seed symptoms
-            symptoms = [
-                ("2026-05-28", 3, 5, 2, 3, 4, "Dry mouth slightly increased in afternoon heat. Jaw nerve pain managed."),
-                ("2026-05-30", 2, 6, 2, 2, 3, "Dry mouth noticeable. Speech fine, swallowing okay."),
-                ("2026-06-01", 3, 6, 3, 3, 5, "Felt fatigued after work. Mild neuropathic shooting pain in right cheek."),
-                ("2026-06-03", 2, 5, 2, 2, 3, "Overall stable day. Continuing pilocarpine regularly.")
-            ]
-            cursor.executemany("""
-            INSERT INTO symptoms (date, pain, dry_mouth, swallowing_difficulty, facial_numbness, fatigue, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, symptoms)
-            
-            # Mark as seeded so we never re-insert
-            cursor.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('db_seeded', 'true')")
+            # Seed symptoms (v2 schema)
+            cursor.execute("SELECT value FROM app_settings WHERE key = 'symptoms_seeded_v2'")
+            row_seeded = cursor.fetchone()
+            if not row_seeded or row_seeded[0] != 'true':
+                symptoms = [
+                    ("2026-05-28", 3, "Dull ache", "Right jaw", 4, 1, 1, 1, None, None, 5, "Dry mouth", "Dry mouth slightly increased in afternoon heat. Jaw nerve pain managed."),
+                    ("2026-05-30", 2, "Mild soreness", "Right jaw", 3, 2, 1, 2, "Blurry vision", "Left eye", 4, "Dry mouth", "Dry mouth noticeable. Speech fine, swallowing okay."),
+                    ("2026-06-01", 3, "Neuropathic shooting", "Right cheek", 5, 1, 1, 1, None, None, 6, "Dry mouth", "Felt fatigued after work. Mild neuropathic shooting pain in right cheek."),
+                    ("2026-06-03", 2, "Aching", "Right jaw", 3, 1, 2, 1, None, None, 4, "Dry mouth", "Overall stable day. Continuing pilocarpine regularly.")
+                ]
+                cursor.executemany("""
+                INSERT INTO symptoms (date, pain, pain_type, pain_location, fatigue, nausea, fever, vision, vision_type, vision_location, other, other_description, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, symptoms)
+                cursor.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('symptoms_seeded_v2', 'true')")
 
 # Initialize on import
 init_db()

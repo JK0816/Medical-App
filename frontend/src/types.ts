@@ -24,11 +24,17 @@ export interface Medication {
 export interface SymptomLog {
   id: number;
   date: string; // YYYY-MM-DD
-  pain: number;
-  dry_mouth: number;
-  swallowing_difficulty: number;
-  facial_numbness: number;
-  fatigue: number;
+  pain?: number;
+  pain_type?: string;
+  pain_location?: string;
+  fatigue?: number;
+  nausea?: number;
+  fever?: number;
+  vision?: number;
+  vision_type?: string;
+  vision_location?: string;
+  other?: number;
+  other_description?: string;
   notes?: string;
   created_at?: string;
 }
