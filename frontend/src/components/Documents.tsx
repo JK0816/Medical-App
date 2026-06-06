@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Trash2, FileText, FilePlus } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Trash2, FileText, FilePlus, Upload } from 'lucide-react';
 
 interface Document {
   id: number;
@@ -10,15 +10,22 @@ interface Document {
   summary: string;
 }
 
-export const Documents: React.FC = () => {
+interface DocumentsProps {
+  backendUrl: string;
+  onDocumentChange?: () => void;
+}
+
+export const Documents: React.FC<DocumentsProps> = ({ backendUrl, onDocumentChange }) => {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchDocuments = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://127.0.0.1:8000/api/documents');
+      const response = await fetch(`${backendUrl}/api/documents`);
       if (!response.ok) throw new Error('Failed to fetch documents');
       const data = await response.json();
       setDocuments(data);
@@ -36,13 +43,56 @@ export const Documents: React.FC = () => {
   const handleDelete = async (id: number) => {
     if (!window.confirm("Are you sure you want to delete this document?")) return;
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/documents/${id}`, {
+      const response = await fetch(`${backendUrl}/api/documents/${id}`, {
         method: 'DELETE',
       });
       if (!response.ok) throw new Error('Failed to delete document');
       setDocuments(docs => docs.filter(doc => doc.id !== id));
+      onDocumentChange?.();
     } catch (err: any) {
       alert("Error: " + err.message);
+    }
+  };
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    if (!file.name.toLowerCase().endsWith('.txt') && !file.name.toLowerCase().endsWith('.pdf')) {
+      alert("Only PDF (.pdf) and Plain Text (.txt) reports are supported.");
+      return;
+    }
+
+    setUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const resp = await fetch(`${backendUrl}/api/documents/upload`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (resp.ok) {
+        // Refresh the document list to get proper server-generated data
+        await fetchDocuments();
+        onDocumentChange?.();
+      } else {
+        const errData = await resp.json();
+        alert(errData.detail || "Failed to upload document.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error uploading document.");
+    } finally {
+      setUploading(false);
+      // Reset the file input so the same file can be re-selected
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -60,15 +110,28 @@ export const Documents: React.FC = () => {
         </div>
         <button 
           className="btn btn-primary"
-          onClick={() => {
-            // Usually, users upload via the Assistant tab or we could add an upload button here.
-            // For now, redirect to Assistant.
-            alert("To upload a new document and auto-extract clinical data, please use the ACC AI Assistant tab's upload feature.");
-          }}
+          onClick={handleUploadClick}
+          disabled={uploading}
         >
-          <FilePlus size={18} />
-          Upload Document
+          {uploading ? (
+            <>
+              <Upload size={18} className="spin" />
+              Processing...
+            </>
+          ) : (
+            <>
+              <FilePlus size={18} />
+              Upload Document
+            </>
+          )}
         </button>
+        <input 
+          type="file"
+          ref={fileInputRef}
+          style={{ display: 'none' }}
+          onChange={handleFileUpload}
+          accept=".txt,.pdf"
+        />
       </div>
 
       <div className="card" style={{ padding: 0 }}>
@@ -76,6 +139,7 @@ export const Documents: React.FC = () => {
           <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
             <FileText size={48} style={{ opacity: 0.2, marginBottom: '1rem' }} />
             <p>No documents uploaded yet.</p>
+            <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>Upload PDF or TXT files to auto-extract clinical data and power the AI assistant's RAG search.</p>
           </div>
         ) : (
           <table className="timeline-table">

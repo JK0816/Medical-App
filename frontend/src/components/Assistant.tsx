@@ -14,28 +14,57 @@ interface AssistantProps {
   backendUrl: string;
 }
 
+const CHAT_STORAGE_KEY = 'acc_chatMessages';
+const CITATIONS_STORAGE_KEY = 'acc_chatCitations';
+const SETTINGS_STORAGE_KEY = 'acc_chatSettings';
+
 export const Assistant: React.FC<AssistantProps> = ({ backendUrl }) => {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const saved = localStorage.getItem(CHAT_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [{
       sender: 'assistant',
       text: 'Hello! I am your ACC Clinical Assistant. I can answer questions about Adenoid Cystic Carcinoma (such as standard treatments, proton therapy, clinical trials, c-Kit/VEGFR inhibitors) and help analyze your medical logs.\n\nToggle **Search Records** to let me search your medical logs and uploads, or **Search Web** to fetch recent treatments online.',
       mode: 'Ready'
-    }
-  ]);
+    }];
+  });
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   
-  // Settings switches
-  const [searchWeb, setSearchWeb] = useState(true);
-  const [searchRecords, setSearchRecords] = useState(true);
+  // Settings switches — persisted
+  const [searchWeb, setSearchWeb] = useState(() => {
+    try {
+      const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (saved) { const s = JSON.parse(saved); return s.searchWeb ?? true; }
+    } catch {}
+    return true;
+  });
+  const [searchRecords, setSearchRecords] = useState(() => {
+    try {
+      const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (saved) { const s = JSON.parse(saved); return s.searchRecords ?? true; }
+    } catch {}
+    return true;
+  });
 
   // Document upload state
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const docInputRef = useRef<HTMLInputElement>(null);
   
-  // Active citations (fetched from the last assistant message)
-  const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
+  // Active citations (fetched from the last assistant message) — persisted
+  const [activeCitations, setActiveCitations] = useState<Citation[]>(() => {
+    try {
+      const saved = localStorage.getItem(CITATIONS_STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -55,6 +84,27 @@ export const Assistant: React.FC<AssistantProps> = ({ backendUrl }) => {
   useEffect(() => {
     fetchDocuments();
   }, []);
+
+  // Persist chat history to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages));
+    } catch {}
+  }, [messages]);
+
+  // Persist citations
+  useEffect(() => {
+    try {
+      localStorage.setItem(CITATIONS_STORAGE_KEY, JSON.stringify(activeCitations));
+    } catch {}
+  }, [activeCitations]);
+
+  // Persist search settings
+  useEffect(() => {
+    try {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ searchWeb, searchRecords }));
+    } catch {}
+  }, [searchWeb, searchRecords]);
 
   useEffect(() => {
     scrollToBottom();
@@ -147,7 +197,7 @@ export const Assistant: React.FC<AssistantProps> = ({ backendUrl }) => {
       if (resp.ok) {
         const data = await resp.json();
         setDocuments(prev => [...prev, {
-          id: data.document_id,
+          id: data.id,
           filename: data.filename,
           filepath: '',
           filetype: file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'txt',

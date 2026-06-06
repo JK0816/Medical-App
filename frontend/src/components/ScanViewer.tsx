@@ -1,13 +1,12 @@
 import { ShieldAlert } from 'lucide-react';
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
-   
   Upload, 
   Settings, 
   Eye, 
-  Download,
   CheckCircle,
-  HelpCircle
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 interface ScanViewerProps {
@@ -29,6 +28,7 @@ interface DicomResult {
   manufacturer: string;
   slice_thickness: string;
   slice_image_url: string;
+  slice_image_urls?: string[]; // Multi-slice array from ZIP uploads
   interpretation?: {
     primary_site_findings: string;
     mass_characteristics?: {
@@ -44,30 +44,142 @@ interface DicomResult {
   };
 }
 
+const STORAGE_KEY = 'acc_lastScanData';
+
+// Number of adjacent slices to pre-load for smooth scrolling
+const PRELOAD_RANGE = 3;
+
 export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUploaded }) => {
   const [loading, setLoading] = useState(false);
-  const [scanData, setScanData] = useState<DicomResult | null>(null);
+  const [scanData, setScanData] = useState<DicomResult | null>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
 
   // PACS Viewer adjustments
   const [zoom, setZoom] = useState(1);
   const [brightness, setBrightness] = useState(100);
   const [contrast, setContrast] = useState(100);
 
+  // Multi-slice navigation
+  const [currentSliceIndex, setCurrentSliceIndex] = useState(0);
+  const [loadedSlices, setLoadedSlices] = useState<Set<number>>(new Set([0]));
+
+  // Persist scan data to localStorage
+  useEffect(() => {
+    if (scanData) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(scanData));
+      } catch {
+        // localStorage might be full; silently fail
+      }
+    }
+  }, [scanData]);
+
+  // Get the array of all slice URLs
+  const allSliceUrls = scanData?.slice_image_urls?.length 
+    ? scanData.slice_image_urls 
+    : (scanData?.slice_image_url ? [scanData.slice_image_url] : []);
+  
+  const totalSlices = allSliceUrls.length;
+  const isMultiSlice = totalSlices > 1;
+  const currentSliceUrl = allSliceUrls[currentSliceIndex] || null;
+
+  // Pre-load adjacent slices for smooth scrolling
+  useEffect(() => {
+    if (!isMultiSlice) return;
+    
+    const toPreload: number[] = [];
+    for (let i = -PRELOAD_RANGE; i <= PRELOAD_RANGE; i++) {
+      const idx = currentSliceIndex + i;
+      if (idx >= 0 && idx < totalSlices && !loadedSlices.has(idx)) {
+        toPreload.push(idx);
+      }
+    }
+
+    if (toPreload.length > 0) {
+      const newLoaded = new Set(loadedSlices);
+      toPreload.forEach(idx => {
+        const img = new window.Image();
+        img.src = `${backendUrl}${allSliceUrls[idx]}`;
+        newLoaded.add(idx);
+      });
+      setLoadedSlices(newLoaded);
+    }
+  }, [currentSliceIndex, totalSlices, isMultiSlice]);
+
+  // Navigate slices
+  const goToSlice = useCallback((index: number) => {
+    const clamped = Math.max(0, Math.min(totalSlices - 1, index));
+    setCurrentSliceIndex(clamped);
+  }, [totalSlices]);
+
+  const prevSlice = useCallback(() => goToSlice(currentSliceIndex - 1), [currentSliceIndex, goToSlice]);
+  const nextSlice = useCallback(() => goToSlice(currentSliceIndex + 1), [currentSliceIndex, goToSlice]);
+
+  // Keyboard navigation for DICOM scrubbing
+  useEffect(() => {
+    if (!isMultiSlice) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        prevSlice();
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        nextSlice();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        goToSlice(0);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        goToSlice(totalSlices - 1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMultiSlice, prevSlice, nextSlice, goToSlice, totalSlices]);
+
+  // Mouse wheel scrolling for DICOM scrubbing (standard radiology UX)
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || !isMultiSlice) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.deltaY < 0) {
+        prevSlice();
+      } else if (e.deltaY > 0) {
+        nextSlice();
+      }
+    };
+
+    viewport.addEventListener('wheel', handleWheel, { passive: false });
+    return () => viewport.removeEventListener('wheel', handleWheel);
+  }, [isMultiSlice, prevSlice, nextSlice]);
+
   const triggerFileInput = () => {
     fileInputRef.current?.click();
   };
 
   const handleUpload = async (file: File) => {
-    if (!file.name.toLowerCase().endsWith('.dcm') && !file.name.toLowerCase().endsWith('.dicom')) {
-      setError("Please select a valid DICOM file (.dcm).");
+    const fname = file.name.toLowerCase();
+    if (!fname.endsWith('.dcm') && !fname.endsWith('.dicom') && !fname.endsWith('.zip')) {
+      setError("Please select a valid DICOM file (.dcm) or ZIP archive (.zip).");
       return;
     }
 
     setLoading(true);
     setError(null);
     setScanData(null);
+    setCurrentSliceIndex(0);
+    setLoadedSlices(new Set([0]));
 
     const formData = new FormData();
     formData.append("file", file);
@@ -81,6 +193,10 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
       if (resp.ok) {
         const data: DicomResult = await resp.json();
         setScanData(data);
+        // Start at middle slice for multi-slice scans (most clinically relevant)
+        if (data.slice_image_urls && data.slice_image_urls.length > 1) {
+          setCurrentSliceIndex(Math.floor(data.slice_image_urls.length / 2));
+        }
         onScanUploaded(); // Refresh history
       } else {
         const errText = await resp.json();
@@ -119,15 +235,25 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
     setContrast(100);
   };
 
+  const clearScan = () => {
+    setScanData(null);
+    setCurrentSliceIndex(0);
+    setLoadedSlices(new Set([0]));
+    localStorage.removeItem(STORAGE_KEY);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>DICOM Image Workstation</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Upload medical DICOM scans (.dcm) for slice reconstruction and multimodal clinical AI interpretation.</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Upload medical DICOM scans (.dcm) or ZIP archives (.zip) for slice reconstruction and multimodal clinical AI interpretation.</p>
         </div>
-        
-
+        {scanData && (
+          <button className="btn btn-secondary" onClick={clearScan} style={{ fontSize: '0.85rem' }}>
+            New Scan
+          </button>
+        )}
       </div>
 
       {error && (
@@ -142,7 +268,7 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
         {/* PACS Viewport Container */}
         <div className="dicom-viewport-container">
           <div className="card" style={{ padding: '1rem' }}>
-            <div className="dicom-screen">
+            <div className="dicom-screen" ref={viewportRef}>
               {loading && (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem', zIndex: 10 }}>
                   <div className="typing-indicator" style={{ background: 'transparent', border: 'none' }}>
@@ -168,10 +294,10 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
               {scanData ? (
                 <>
                   <div className="dicom-grid-overlay"></div>
-                  {scanData.slice_image_url ? (
+                  {currentSliceUrl ? (
                     <img 
-                      src={`${backendUrl}${scanData.slice_image_url}`} 
-                      alt="DICOM Slice" 
+                      src={`${backendUrl}${currentSliceUrl}`} 
+                      alt={`DICOM Slice ${currentSliceIndex + 1} of ${totalSlices}`}
                       className="dicom-image"
                       style={{
                         transform: `scale(${zoom})`,
@@ -204,6 +330,7 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
                       <div>
                         THICK: {scanData.slice_thickness} mm<br />
                         BODY PART: {scanData.body_part}
+                        {isMultiSlice && (<><br />SLICE: {currentSliceIndex + 1} / {totalSlices}</>)}
                       </div>
                       <div>
                         WW: 300 / WC: 50<br />
@@ -212,6 +339,54 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
                       </div>
                     </div>
                   </div>
+
+                  {/* Multi-slice navigation overlay */}
+                  {isMultiSlice && (
+                    <div style={{
+                      position: 'absolute',
+                      bottom: '8px',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      background: 'rgba(0, 0, 0, 0.7)',
+                      backdropFilter: 'blur(8px)',
+                      padding: '0.35rem 0.75rem',
+                      borderRadius: '8px',
+                      zIndex: 20,
+                      border: '1px solid rgba(0, 229, 255, 0.2)'
+                    }}>
+                      <button 
+                        onClick={prevSlice}
+                        disabled={currentSliceIndex === 0}
+                        style={{ 
+                          background: 'transparent', border: 'none', color: 'var(--accent-cyan)', 
+                          cursor: currentSliceIndex === 0 ? 'not-allowed' : 'pointer', opacity: currentSliceIndex === 0 ? 0.3 : 1,
+                          padding: '2px', display: 'flex'
+                        }}
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <span style={{ 
+                        fontSize: '0.75rem', fontFamily: 'monospace', color: 'var(--accent-cyan)',
+                        minWidth: '80px', textAlign: 'center'
+                      }}>
+                        {currentSliceIndex + 1} / {totalSlices}
+                      </span>
+                      <button 
+                        onClick={nextSlice}
+                        disabled={currentSliceIndex === totalSlices - 1}
+                        style={{ 
+                          background: 'transparent', border: 'none', color: 'var(--accent-cyan)', 
+                          cursor: currentSliceIndex === totalSlices - 1 ? 'not-allowed' : 'pointer', opacity: currentSliceIndex === totalSlices - 1 ? 0.3 : 1,
+                          padding: '2px', display: 'flex'
+                        }}
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  )}
                 </>
               ) : !loading ? (
                 <div 
@@ -223,62 +398,79 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
                   <Upload size={48} />
                   <div>
                     <h3 style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>Drag & Drop DICOM File Here</h3>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>or click anywhere to browse local files (Supports `.dcm` files)</p>
+                    <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>or click anywhere to browse local files (Supports `.dcm` and `.zip` archives)</p>
                   </div>
                   <input 
                     type="file" 
                     ref={fileInputRef}
                     style={{ display: 'none' }}
                     onChange={handleFileChange}
-                    accept=".dcm,.dicom"
+                    accept=".dcm,.dicom,.zip"
                   />
-
                 </div>
               ) : null}
             </div>
 
             {/* Viewer Controls */}
             {scanData && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr) auto', gap: '1rem', marginTop: '1rem', padding: '0.5rem', alignItems: 'center' }}>
-                <div className="slider-group">
-                  <div className="slider-header" style={{ fontSize: '0.75rem' }}>
-                    <span className="slider-name">Zoom ({zoom.toFixed(1)}x)</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem', padding: '0.5rem' }}>
+                {/* Slice slider for multi-slice scans */}
+                {isMultiSlice && (
+                  <div className="slider-group" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
+                    <div className="slider-header" style={{ fontSize: '0.75rem' }}>
+                      <span className="slider-name">Slice Position ({currentSliceIndex + 1} of {totalSlices})</span>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Scroll wheel or arrow keys to navigate</span>
+                    </div>
+                    <input 
+                      type="range" min="0" max={totalSlices - 1} step="1"
+                      className="range-input" 
+                      value={currentSliceIndex} 
+                      onChange={(e) => goToSlice(parseInt(e.target.value))} 
+                    />
                   </div>
-                  <input 
-                    type="range" min="1" max="3" step="0.1"
-                    className="range-input" 
-                    value={zoom} 
-                    onChange={(e) => setZoom(parseFloat(e.target.value))} 
-                  />
-                </div>
+                )}
 
-                <div className="slider-group">
-                  <div className="slider-header" style={{ fontSize: '0.75rem' }}>
-                    <span className="slider-name">Brightness ({brightness}%)</span>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr) auto', gap: '1rem', alignItems: 'center' }}>
+                  <div className="slider-group">
+                    <div className="slider-header" style={{ fontSize: '0.75rem' }}>
+                      <span className="slider-name">Zoom ({zoom.toFixed(1)}x)</span>
+                    </div>
+                    <input 
+                      type="range" min="1" max="3" step="0.1"
+                      className="range-input" 
+                      value={zoom} 
+                      onChange={(e) => setZoom(parseFloat(e.target.value))} 
+                    />
                   </div>
-                  <input 
-                    type="range" min="50" max="200" 
-                    className="range-input" 
-                    value={brightness} 
-                    onChange={(e) => setBrightness(parseInt(e.target.value))} 
-                  />
-                </div>
 
-                <div className="slider-group">
-                  <div className="slider-header" style={{ fontSize: '0.75rem' }}>
-                    <span className="slider-name">Contrast ({contrast}%)</span>
+                  <div className="slider-group">
+                    <div className="slider-header" style={{ fontSize: '0.75rem' }}>
+                      <span className="slider-name">Brightness ({brightness}%)</span>
+                    </div>
+                    <input 
+                      type="range" min="50" max="200" 
+                      className="range-input" 
+                      value={brightness} 
+                      onChange={(e) => setBrightness(parseInt(e.target.value))} 
+                    />
                   </div>
-                  <input 
-                    type="range" min="50" max="200" 
-                    className="range-input" 
-                    value={contrast} 
-                    onChange={(e) => setContrast(parseInt(e.target.value))} 
-                  />
+
+                  <div className="slider-group">
+                    <div className="slider-header" style={{ fontSize: '0.75rem' }}>
+                      <span className="slider-name">Contrast ({contrast}%)</span>
+                    </div>
+                    <input 
+                      type="range" min="50" max="200" 
+                      className="range-input" 
+                      value={contrast} 
+                      onChange={(e) => setContrast(parseInt(e.target.value))} 
+                    />
+                  </div>
+                  
+                  <button className="btn btn-secondary" onClick={resetFilters} style={{ fontSize: '0.8rem', padding: '0.4rem 0.85rem' }}>
+                    Reset Filters
+                  </button>
                 </div>
-                
-                <button className="btn btn-secondary" onClick={resetFilters} style={{ fontSize: '0.8rem', padding: '0.4rem 0.85rem' }}>
-                  Reset Filters
-                </button>
               </div>
             )}
           </div>
@@ -328,6 +520,12 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
                     <td className="metadata-key">Manufacturer</td>
                     <td className="metadata-val">{scanData.manufacturer}</td>
                   </tr>
+                  {isMultiSlice && (
+                    <tr>
+                      <td className="metadata-key">Total Slices</td>
+                      <td className="metadata-val">{totalSlices}</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             ) : (

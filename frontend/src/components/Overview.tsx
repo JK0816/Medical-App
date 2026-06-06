@@ -1,4 +1,4 @@
-import { Calendar, Pill, Activity, FileText, Download, ArrowUpRight, Clock, Heart } from 'lucide-react';
+import { Calendar, Pill, Activity, FileText, ArrowUpRight, Clock } from 'lucide-react';
 import type {  Appointment, Medication, SymptomLog, TimelineEvent  } from '../types';
 
 interface OverviewProps {
@@ -16,7 +16,7 @@ export const Overview: React.FC<OverviewProps> = ({
   symptoms, 
   timeline, 
   setActiveTab,
-  backendUrl 
+  backendUrl: _backendUrl 
 }) => {
   // Find next upcoming appointment
   const now = new Date();

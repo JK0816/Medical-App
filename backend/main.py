@@ -263,18 +263,29 @@ async def upload_dicom(file: UploadFile = File(...), conn: sqlite3.Connection = 
     if not file.filename.lower().endswith((".dcm", ".dicom", ".zip")):
         raise HTTPException(status_code=400, detail="Only DICOM (.dcm) or ZIP (.zip) files are supported.")
     
-    # Check file size
-    contents = await file.read()
-    if len(contents) > MAX_UPLOAD_SIZE * 5: # Allow larger uploads for ZIPs
-        raise HTTPException(status_code=413, detail=f"File too large.")
-    await file.seek(0)
-        
-    # Save the uploaded file
+    # Streaming size check — read and save in chunks to avoid holding
+    # the entire file in memory twice
     filename = f"{uuid.uuid4()}_{file.filename}"
     filepath = os.path.join(DOCS_DIR, filename)
+    max_allowed = MAX_UPLOAD_SIZE * 5  # Allow larger uploads for ZIPs
     
-    with open(filepath, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    total_bytes = 0
+    try:
+        with open(filepath, "wb") as buffer:
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1MB chunks
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > max_allowed:
+                    buffer.close()
+                    os.remove(filepath)
+                    raise HTTPException(status_code=413, detail="File too large.")
+                buffer.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {str(e)}")
         
     # Parse the DICOM file(s)
     if file.filename.lower().endswith(".zip"):
@@ -287,6 +298,11 @@ async def upload_dicom(file: UploadFile = File(...), conn: sqlite3.Connection = 
             parsed_data = dicom_handler.parse_dicom_directory(extract_dir)
         finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
+            # Clean up the original ZIP file too — it's been extracted
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
     else:
         parsed_data = dicom_handler.parse_dicom(filepath)
         

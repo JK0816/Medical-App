@@ -15,7 +15,9 @@ import type {  Appointment, Medication, SymptomLog, TimelineEvent  } from './typ
 const BACKEND_URL = 'http://127.0.0.1:8000';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<string>('overview');
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    return localStorage.getItem('acc_activeTab') || 'overview';
+  });
   
   // Data State
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -96,6 +98,11 @@ function App() {
     };
     loadAll();
   }, []);
+
+  // Persist active tab to localStorage
+  useEffect(() => {
+    localStorage.setItem('acc_activeTab', activeTab);
+  }, [activeTab]);
 
   const getPageTitleAndSubtitle = () => {
     switch (activeTab) {
@@ -205,7 +212,12 @@ function App() {
         )}
 
         {activeTab === 'documents' && (
-          <Documents />
+          <Documents 
+            backendUrl={BACKEND_URL}
+            onDocumentChange={() => {
+              fetchTimeline(); // Documents can auto-extract timeline events
+            }}
+          />
         )}
 
         {activeTab === 'assistant' && (

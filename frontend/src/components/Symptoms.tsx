@@ -23,13 +23,19 @@ export const Symptoms: React.FC<SymptomsProps> = ({
   const [fatigue, setFatigue] = useState(4);
   const [notes, setNotes] = useState('');
 
-  // Active chart toggles
-  const [visibleSymptoms, setVisibleSymptoms] = useState({
-    pain: true,
-    dryMouth: true,
-    swallowing: false,
-    numbness: false,
-    fatigue: true
+  // Active chart toggles — persisted
+  const [visibleSymptoms, setVisibleSymptoms] = useState(() => {
+    try {
+      const saved = localStorage.getItem('acc_symptomToggles');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {
+      pain: true,
+      dryMouth: true,
+      swallowing: false,
+      numbness: false,
+      fatigue: true
+    };
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -58,6 +64,13 @@ export const Symptoms: React.FC<SymptomsProps> = ({
     }
   };
 
+  // Persist chart toggles
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('acc_symptomToggles', JSON.stringify(visibleSymptoms));
+    } catch {}
+  }, [visibleSymptoms]);
+
   // SVG Chart Geometry Constants
   const width = 680;
   const height = 240;
@@ -84,7 +97,7 @@ export const Symptoms: React.FC<SymptomsProps> = ({
   };
 
   const toggleSymptomVisibility = (key: keyof typeof visibleSymptoms) => {
-    setVisibleSymptoms(prev => ({ ...prev, [key]: !prev[key] }));
+    setVisibleSymptoms((prev: typeof visibleSymptoms) => ({ ...prev, [key]: !prev[key] }));
   };
 
   return (
