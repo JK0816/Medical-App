@@ -63,14 +63,11 @@ class MedicationCreate(BaseModel):
 class SymptomCreate(BaseModel):
     date: str
     pain: Optional[int] = Field(None, ge=1, le=10)
-    pain_type: Optional[str] = None
     pain_location: Optional[str] = None
     fatigue: Optional[int] = Field(None, ge=1, le=10)
     nausea: Optional[int] = Field(None, ge=1, le=10)
     fever: Optional[int] = Field(None, ge=1, le=10)
-    vision: Optional[int] = Field(None, ge=1, le=10)
-    vision_type: Optional[str] = None
-    vision_location: Optional[str] = None
+    constipation: Optional[int] = Field(None, ge=1, le=10)
     other: Optional[int] = Field(None, ge=1, le=10)
     other_description: Optional[str] = None
     notes: Optional[str] = None
@@ -178,13 +175,11 @@ def create_symptom(item: SymptomCreate, conn: sqlite3.Connection = Depends(get_d
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO symptoms (
-            date, pain, pain_type, pain_location, fatigue, nausea, fever, 
-            vision, vision_type, vision_location, other, other_description, notes
+            date, pain, pain_location, fatigue, nausea, fever, constipation, other, other_description, notes
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        item.date, item.pain, item.pain_type, item.pain_location, item.fatigue, item.nausea, item.fever,
-        item.vision, item.vision_type, item.vision_location, item.other, item.other_description, item.notes
+        item.date, item.pain, item.pain_location, item.fatigue, item.nausea, item.fever, item.constipation, item.other, item.other_description, item.notes
     ))
     conn.commit()
     new_id = cursor.lastrowid
@@ -462,15 +457,20 @@ async def upload_document(file: UploadFile = File(...), conn: sqlite3.Connection
         for symp in extracted_data.get("symptoms", []):
             try:
                 cursor.execute("""
-                    INSERT INTO symptoms (date, pain, dry_mouth, swallowing_difficulty, facial_numbness, fatigue, notes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO symptoms (
+                        date, pain, pain_location, fatigue, nausea, fever, constipation, other, other_description, notes
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     symp.get("date", datetime.now().strftime("%Y-%m-%d")),
-                    symp.get("pain", 1),
-                    symp.get("dry_mouth", 1),
-                    symp.get("swallowing_difficulty", 1),
-                    symp.get("facial_numbness", 1),
-                    symp.get("fatigue", 1),
+                    symp.get("pain"),
+                    symp.get("pain_location"),
+                    symp.get("fatigue"),
+                    symp.get("nausea"),
+                    symp.get("fever"),
+                    symp.get("constipation"),
+                    symp.get("other"),
+                    symp.get("other_description"),
                     symp.get("notes", "Auto-extracted from document.")
                 ))
             except Exception as e:
@@ -556,10 +556,10 @@ def chat_assistant(req: ChatRequest, conn: sqlite3.Connection = Depends(get_db))
         ])
         
         # 3. Recent Symptoms (last 5 entries)
-        cursor.execute("SELECT date, pain, dry_mouth, swallowing_difficulty, facial_numbness, fatigue, notes FROM symptoms ORDER BY date DESC LIMIT 5")
+        cursor.execute("SELECT date, pain, pain_location, fatigue, nausea, fever, constipation, other, other_description, notes FROM symptoms ORDER BY date DESC LIMIT 5")
         syms = cursor.fetchall()
         syms_str = "\n".join([
-            f"- Date {s['date']}: Pain={s['pain']}/10, Dry Mouth={s['dry_mouth']}/10, Swallowing Difficulty={s['swallowing_difficulty']}/10, Facial Numbness={s['facial_numbness']}/10, Fatigue={s['fatigue']}/10. Notes: {s['notes']}"
+            f"- Date {s['date']}: Pain={s['pain']}/10 ({s['pain_location'] or 'not specified'}), Fatigue={s['fatigue']}/10, Nausea={s['nausea']}/10, Fever={s['fever']}/10, Constipation={s['constipation']}/10, Other={s['other']}/10 ({s['other_description'] or 'no description'}). Notes: {s['notes']}"
             for s in syms
         ])
         

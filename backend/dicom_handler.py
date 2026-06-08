@@ -277,3 +277,97 @@ def parse_dicom_directory(dir_path: str) -> dict:
     overall_metadata["slice_image_urls"] = [url for url in slice_image_urls if url is not None]
     
     return overall_metadata
+
+
+def generate_synthetic_dicom() -> str:
+    """
+    Generates a synthetic DICOM file (.dcm) for testing and serves it as a download.
+    This lets users easily test the DICOM upload and visual interpretation.
+    """
+    filename = "acc_sample_scan.dcm"
+    filepath = os.path.join(UPLOADS_DIR, filename)
+    if os.path.exists(filepath):
+        return filepath
+
+    # Create file metadata
+    file_meta = FileMetaDataset()
+    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2"  # CT Image Storage
+    file_meta.MediaStorageSOPInstanceUID = "1.2.3.4.5.6.7"
+    file_meta.ImplementationClassUID = "1.2.3.4"
+    file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+
+    # Create the dataset
+    ds = FileDataset(filepath, {}, file_meta=file_meta, preamble=b"\0" * 128)
+
+    # Set patient/study details
+    ds.PatientName = "ACC Test Patient"
+    ds.PatientID = "ACC-2026-X11"
+    ds.PatientSex = "M"
+    ds.PatientBirthDate = "19800101"
+    ds.StudyDate = datetime.now().strftime("%Y%m%d")
+    ds.StudyTime = datetime.now().strftime("%H%M%S")
+    ds.Modality = "CT"
+    ds.BodyPartExamined = "HEAD"
+    ds.StudyDescription = "ACC Surveillance Scan"
+    ds.SeriesDescription = "Axial Contrast CT"
+    ds.Manufacturer = "ACC Medical Imaging"
+    ds.SliceThickness = "1.0"
+    ds.InstanceNumber = "15"
+    ds.SliceLocation = "20.5"
+
+    # Add required transfer/syntax elements
+    ds.is_little_endian = True
+    ds.is_implicit_VR = False
+
+    # Image geometry / pixel data
+    # Create a 256x256 image with a mock submandibular gland lesion
+    width, height = 256, 256
+    pixels = np.zeros((height, width), dtype=np.uint16) + 100  # background HU
+
+    # Draw head contour
+    y, x = np.ogrid[:height, :width]
+    head_mask = (x - 128)**2 + (y - 128)**2 < 110**2
+    pixels[head_mask] = 200
+
+    # Draw skull bone ring
+    bone_mask = ((x - 128)**2 + (y - 128)**2 < 108**2) & ((x - 128)**2 + (y - 128)**2 > 98**2)
+    pixels[bone_mask] = 1000
+
+    # Draw jaw/cervical spine elements
+    jaw_mask = ((x - 128)**2 + (y - 70)**2 < 20**2)
+    pixels[jaw_mask] = 1000
+
+    # Left submandibular gland (normal)
+    left_gland_mask = (x - 85)**2 + (y - 100)**2 < 15**2
+    pixels[left_gland_mask] = 250
+
+    # Right submandibular gland (with lesion)
+    right_gland_mask = (x - 171)**2 + (y - 100)**2 < 15**2
+    pixels[right_gland_mask] = 250
+
+    # Lesion (tumor) in the right gland
+    lesion_mask = (x - 175)**2 + (y - 95)**2 < 10**2
+    pixels[lesion_mask] = 400
+
+    ds.Rows = height
+    ds.Columns = width
+    ds.PixelRepresentation = 0  # unsigned integer
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    ds.BitsAllocated = 16
+    ds.BitsStored = 16
+    ds.HighBit = 15
+
+    # Window/Level configuration
+    ds.WindowCenter = "300"
+    ds.WindowWidth = "800"
+    ds.RescaleIntercept = "-1024"
+    ds.RescaleSlope = "1"
+
+    # Convert pixels to HU values stored (pixels = stored * RescaleSlope + RescaleIntercept)
+    raw_pixels = (pixels + 1024).astype(np.uint16)
+    ds.PixelData = raw_pixels.tobytes()
+
+    ds.save_as(filepath, write_like_original=False)
+    return filepath
+

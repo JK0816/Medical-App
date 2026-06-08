@@ -30,10 +30,13 @@ export const Overview: React.FC<OverviewProps> = ({
   // Calculate average symptom levels from last 7 entries
   const lastSevenSymptoms = symptoms.slice(-7);
   const avgPain = lastSevenSymptoms.length 
-    ? (lastSevenSymptoms.reduce((sum, s) => sum + s.pain, 0) / lastSevenSymptoms.length).toFixed(1) 
+    ? (lastSevenSymptoms.reduce((sum, s) => sum + (s.pain || 0), 0) / lastSevenSymptoms.length).toFixed(1) 
     : '0.0';
-  const avgDryMouth = lastSevenSymptoms.length 
-    ? (lastSevenSymptoms.reduce((sum, s) => sum + s.dry_mouth, 0) / lastSevenSymptoms.length).toFixed(1) 
+  const avgFatigue = lastSevenSymptoms.length 
+    ? (lastSevenSymptoms.reduce((sum, s) => sum + (s.fatigue || 0), 0) / lastSevenSymptoms.length).toFixed(1) 
+    : '0.0';
+  const avgNausea = lastSevenSymptoms.length 
+    ? (lastSevenSymptoms.reduce((sum, s) => sum + (s.nausea || 0), 0) / lastSevenSymptoms.length).toFixed(1) 
     : '0.0';
 
   // Last scan event
@@ -54,11 +57,11 @@ export const Overview: React.FC<OverviewProps> = ({
     : 'N/A';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+    <div className="flex-col-large">
       <div className="overview-banner card">
         <div className="banner-welcome">
           <h2>ACC Care Dashboard</h2>
-          <p style={{ color: 'var(--text-secondary)' }}>
+          <p className="text-secondary">
             Surveillance & care pathway tracking for <strong>Adenoid Cystic Carcinoma</strong>.
           </p>
         </div>
@@ -67,7 +70,7 @@ export const Overview: React.FC<OverviewProps> = ({
             <div className="stat-value">{clinicalStage}</div>
             <div className="stat-label">Staging (Clinical)</div>
           </div>
-          <div className="stat-item" style={{ borderLeft: '1px solid var(--border-color)', paddingLeft: '2rem' }}>
+          <div className="stat-item border-left-stat">
             <div className="stat-value">{pbrtDate}</div>
             <div className="stat-label">PBRT Completed</div>
           </div>
@@ -76,33 +79,33 @@ export const Overview: React.FC<OverviewProps> = ({
 
       <div className="dashboard-grid">
         {/* Next Appointment Card */}
-        <div className="widget-medium card card-glow" onClick={() => setActiveTab('appointments')} style={{ cursor: 'pointer' }}>
+        <div className="widget-medium card card-glow pointer" onClick={() => setActiveTab('appointments')}>
           <div className="widget-header">
             <div className="widget-title">
               <Calendar />
               <span>Next Consultation</span>
             </div>
-            <ArrowUpRight size={18} style={{ color: 'var(--text-secondary)' }} />
+            <ArrowUpRight size={18} className="text-secondary" />
           </div>
           {nextApp ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <h3 style={{ fontSize: '1.3rem', fontWeight: 700 }}>{nextApp.title}</h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-cyan)', fontSize: '0.95rem' }}>
+            <div className="flex-col-small">
+              <h3 className="title-medium">{nextApp.title}</h3>
+              <div className="appointment-time-badge">
                 <Clock size={16} />
                 <span>{new Date(nextApp.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>
               </div>
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+              <p className="text-secondary-small-spaced">
                 <strong>Clinician:</strong> {nextApp.doctor || 'Unspecified'}<br />
                 <strong>Location:</strong> {nextApp.location || 'Unspecified'}
               </p>
             </div>
           ) : (
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>No information input yet. No upcoming appointments scheduled.</p>
+            <p className="text-secondary-medium">No information input yet. No upcoming appointments scheduled.</p>
           )}
         </div>
 
         {/* Refill Alerts Card */}
-        <div className="widget-medium card" onClick={() => setActiveTab('medications')} style={{ cursor: 'pointer' }}>
+        <div className="widget-medium card pointer" onClick={() => setActiveTab('medications')}>
           <div className="widget-header">
             <div className="widget-title">
               <Pill />
@@ -114,13 +117,13 @@ export const Overview: React.FC<OverviewProps> = ({
           </div>
           
           {medications.length === 0 ? (
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', marginTop: '0.5rem' }}>No information input yet.</p>
+            <p className="text-secondary-medium-margin">No information input yet.</p>
           ) : lowRefills.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>The following prescriptions need refills:</p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div className="flex-col-medium">
+              <p className="text-secondary-small">The following prescriptions need refills:</p>
+              <div className="flex-col-small">
                 {lowRefills.map(med => (
-                  <div key={med.id} style={{ display: 'flex', justifyContent: 'space-between', background: 'rgba(255, 51, 102, 0.05)', padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1px solid rgba(255, 51, 102, 0.15)', fontSize: '0.9rem' }}>
+                  <div key={med.id} className="refill-badge-danger">
                     <span style={{ fontWeight: 600 }}>{med.name}</span>
                     <span style={{ color: 'var(--accent-red)', fontWeight: 600 }}>{med.refills_remaining} refill(s) left</span>
                   </div>
@@ -128,11 +131,11 @@ export const Overview: React.FC<OverviewProps> = ({
               </div>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>All active prescriptions currently have adequate refills remaining.</p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', marginTop: '0.5rem' }}>
+            <div className="flex-col-small">
+              <p className="text-secondary-small">All active prescriptions currently have adequate refills remaining.</p>
+              <div className="flex-col-small text-secondary-medium-margin">
                 {medications.map(med => (
-                  <div key={med.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  <div key={med.id} className="med-refill-row">
                     <span>{med.name} ({med.dosage})</span>
                     <span>{med.refills_remaining} refills</span>
                   </div>
@@ -151,25 +154,34 @@ export const Overview: React.FC<OverviewProps> = ({
             </div>
           </div>
           {symptoms.length === 0 ? (
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', marginTop: '0.5rem' }}>No information input yet.</p>
+            <p className="text-secondary-medium-margin">No information input yet.</p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div className="flex-col-medium">
+              <div className="flex-row-center-between">
                 <div>
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Neuropathic Pain</div>
-                  <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--text-primary)' }}>{avgPain}<span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>/10</span></div>
+                  <div className="trend-label">Pain</div>
+                  <div className="trend-value">{avgPain}<span className="trend-unit">/10</span></div>
                 </div>
                 <span className={`status-badge ${parseFloat(avgPain) > 4 ? 'alert' : ''}`}>
                   {parseFloat(avgPain) > 4 ? 'Elevated' : 'Stable'}
                 </span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+              <div className="trend-row-bordered">
                 <div>
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Dry Mouth (Xerostomia)</div>
-                  <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--text-primary)' }}>{avgDryMouth}<span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>/10</span></div>
+                  <div className="trend-label">Fatigue</div>
+                  <div className="trend-value">{avgFatigue}<span className="trend-unit">/10</span></div>
                 </div>
-                <span className="status-badge" style={{ color: 'var(--accent-cyan)', background: 'rgba(0, 229, 255, 0.05)' }}>
-                  Managed
+                <span className={`status-badge ${parseFloat(avgFatigue) > 4 ? 'alert' : ''}`}>
+                  {parseFloat(avgFatigue) > 4 ? 'Elevated' : 'Stable'}
+                </span>
+              </div>
+              <div className="trend-row-bordered">
+                <div>
+                  <div className="trend-label">Nausea</div>
+                  <div className="trend-value">{avgNausea}<span className="trend-unit">/10</span></div>
+                </div>
+                <span className={`status-badge ${parseFloat(avgNausea) > 4 ? 'alert' : ''}`}>
+                  {parseFloat(avgNausea) > 4 ? 'Elevated' : 'Stable'}
                 </span>
               </div>
             </div>
@@ -185,25 +197,24 @@ export const Overview: React.FC<OverviewProps> = ({
             </div>
           </div>
           {lastScan ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <h4 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{lastScan.title}</h4>
+            <div className="flex-col-small">
+              <div className="flex-row-center-between">
+                <h4 className="title-small">{lastScan.title}</h4>
                 <span className="event-date">{new Date(lastScan.event_date).toLocaleDateString([], { dateStyle: 'medium' })}</span>
               </div>
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              <p className="scan-desc">
                 {lastScan.description}
               </p>
               {lastScan.details?.findings && (
-                <div style={{ background: 'rgba(255, 255, 255, 0.02)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color)', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                <div className="scan-findings-box">
                   <strong>Key Finding:</strong> {lastScan.details.findings}
                 </div>
               )}
             </div>
           ) : (
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>No information input yet. No scanning history available.</p>
+            <p className="text-secondary-medium">No information input yet. No scanning history available.</p>
           )}
         </div>
-
 
       </div>
     </div>

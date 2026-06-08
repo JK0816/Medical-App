@@ -186,7 +186,7 @@ def extract_clinical_data_from_document(text: str) -> dict:
     
     Output a structured JSON object with two keys:
     - "timeline_events": A list of objects with keys: "event_date" (YYYY-MM-DD format), "event_type" (must be one of: Diagnosis, Surgery, Radiation, Scan, Medication Change, Other), "title" (short string), "description" (detailed string), "details" (a dictionary of any specific metrics/findings). If date is unclear, estimate based on text or omit the event.
-    - "symptoms": A list of objects with keys: "date" (YYYY-MM-DD), "pain" (1-10), "dry_mouth" (1-10), "swallowing_difficulty" (1-10), "facial_numbness" (1-10), "fatigue" (1-10), "notes" (string). Default any unmentioned symptom to 1.
+    - "symptoms": A list of objects with keys: "date" (YYYY-MM-DD), "pain" (1-10), "pain_location" (string), "fatigue" (1-10), "nausea" (1-10), "fever" (1-10), "constipation" (1-10), "other" (1-10), "other_description" (string), "notes" (string). Default any unmentioned numeric symptom severity to 1.
     
     Return ONLY valid JSON.
     """
@@ -209,10 +209,13 @@ def extract_clinical_data_from_document(text: str) -> dict:
                 {
                     "date": today,
                     "pain": 2,
-                    "dry_mouth": 4,
-                    "swallowing_difficulty": 1,
-                    "facial_numbness": 1,
+                    "pain_location": "Right jaw",
                     "fatigue": 3,
+                    "nausea": 1,
+                    "fever": 1,
+                    "constipation": 1,
+                    "other": None,
+                    "other_description": None,
                     "notes": "Auto-extracted symptom defaults based on mock document processing."
                 }
             ]
@@ -350,18 +353,18 @@ Adenoid Cystic Carcinoma is a rare salivary gland malignancy known for its slow 
 
 *Citations: Web medical literature on ACC surveillance protocols [1].*
 """
-    elif "symptom" in q or "pain" in q or "dry mouth" in q or "refill" in q:
+    elif "symptom" in q or "pain" in q or "fatigue" in q or "refill" in q:
         # Check local records
         has_pilocarpine = "Pilocarpine" in local_context
         has_gabapentin = "Gabapentin" in local_context
         
         reply = "### Symptom & Medication Review\n\nBased on your logged records, we analyzed your current profile:\n\n"
         if has_pilocarpine:
-            reply += "- **Xerostomia (Dry Mouth)**: You are currently prescribed **Pilocarpine 5mg** three times daily. Your logs show dry mouth levels hovering around 5-6 out of 10. Pilocarpine stimulates saliva production; ensure you are taking it 30 minutes before meals. If dryness persists, check with your oncologist about dry-mouth rinses or gels.\n"
+            reply += "- **Salivary Side-Effects**: You are currently prescribed **Pilocarpine 5mg** three times daily. Although dry mouth isn't tracked in its own column now, you can log it under 'Other' symptoms. Ensure you take Pilocarpine 30 minutes before meals.\n"
         if has_gabapentin:
-            reply += "- **Neuropathy / Jaw Pain**: You are taking **Gabapentin 300mg** every 8 hours. Your pain is logged as 2-3 out of 10. Gabapentin helps stabilize nerves affected by surgery or tumor perineural paths. Ensure you do not skip doses, as nerve pain spikes can occur.\n"
+            reply += "- **Jaw Pain / Neuropathy**: You are taking **Gabapentin 300mg** every 8 hours. Your pain is logged with nerve pain in the face or jaw region. Gabapentin helps stabilize nerves affected by surgery or tumor perineural paths. Ensure you do not skip doses, as nerve pain spikes can occur.\n"
             
-        reply += "\n**Timeline Correlations**:\n- Your dry mouth onset correlates with the completion of your **Proton Beam Radiation course in June 2025**. Xerostomia is a well-documented late side-effect of salivary gland irradiation. \n- Make sure to check your **medication refills**. Low counts will trigger notifications on your Dashboard."
+        reply += "\n**Timeline Correlations**:\n- Your jaw pain and surgical side-effects correlate with your **surgery in April 2025** and subsequent **Proton Beam Radiation course completed in June 2025**.\n- Make sure to check your **medication refills**. Low counts will trigger notifications on your Dashboard."
         return reply
 
     elif "timeline" in q or "surgery" in q or "scan" in q:

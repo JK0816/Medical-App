@@ -17,10 +17,13 @@ export const Symptoms: React.FC<SymptomsProps> = ({
   const [showForm, setShowForm] = useState(false);
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [pain, setPain] = useState(3);
-  const [dryMouth, setDryMouth] = useState(5);
-  const [swallowing, setSwallowing] = useState(2);
-  const [numbness, setNumbness] = useState(3);
+  const [painLocation, setPainLocation] = useState('');
   const [fatigue, setFatigue] = useState(4);
+  const [nausea, setNausea] = useState(1);
+  const [fever, setFever] = useState(1);
+  const [constipation, setConstipation] = useState(1);
+  const [other, setOther] = useState(1);
+  const [otherDescription, setOtherDescription] = useState('');
   const [notes, setNotes] = useState('');
 
   // Active chart toggles — persisted
@@ -31,10 +34,11 @@ export const Symptoms: React.FC<SymptomsProps> = ({
     } catch {}
     return {
       pain: true,
-      dryMouth: true,
-      swallowing: false,
-      numbness: false,
-      fatigue: true
+      fatigue: true,
+      nausea: true,
+      fever: false,
+      constipation: false,
+      other: false
     };
   });
 
@@ -47,16 +51,21 @@ export const Symptoms: React.FC<SymptomsProps> = ({
         body: JSON.stringify({
           date,
           pain,
-          dry_mouth: dryMouth,
-          swallowing_difficulty: swallowing,
-          facial_numbness: numbness,
+          pain_location: painLocation || null,
           fatigue,
+          nausea,
+          fever,
+          constipation,
+          other: other || null,
+          other_description: otherDescription || null,
           notes: notes || null
         })
       });
       if (resp.ok) {
         fetchSymptoms();
         setNotes('');
+        setPainLocation('');
+        setOtherDescription('');
         setShowForm(false);
       }
     } catch (err) {
@@ -101,11 +110,11 @@ export const Symptoms: React.FC<SymptomsProps> = ({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <div className="flex-col-large">
+      <div className="flex-row-center-between">
         <div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Symptom & Side-Effect Diary</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Track radiation-induced dry mouth (xerostomia), facial nerve neuropathy, swallowing difficulties, and general fatigue.</p>
+          <h2 className="title-medium">Symptom & Side-Effect Diary</h2>
+          <p className="text-secondary-small">Track pain (with location), fatigue, nausea, fever, constipation, and other side-effects or symptoms.</p>
         </div>
         <button className="btn" onClick={() => setShowForm(!showForm)}>
           <Plus size={18} />
@@ -114,17 +123,18 @@ export const Symptoms: React.FC<SymptomsProps> = ({
       </div>
 
       {showForm && (
-        <form className="card" onSubmit={handleSubmit} style={{ animation: 'slideDown 0.25s ease' }}>
-          <h3 style={{ marginBottom: '1.25rem', fontWeight: 700 }}>Daily Symptom Entry</h3>
-          
-          <div className="form-group" style={{ maxWidth: '300px' }}>
-            <label className="form-label">Entry Date</label>
+        <form className="card animate-slide-down" onSubmit={handleSubmit}>
+          <h3 className="title-medium margin-bottom-1rem">Daily Symptom Entry</h3>
+          <div className="form-group width-300px">
+            <label htmlFor="symptom-date" className="form-label">Entry Date</label>
             <input 
+              id="symptom-date"
               type="date" 
               className="form-input" 
               value={date} 
               onChange={(e) => setDate(e.target.value)} 
               required 
+              title="Entry Date"
             />
           </div>
 
@@ -132,85 +142,137 @@ export const Symptoms: React.FC<SymptomsProps> = ({
             <div className="symptom-sliders">
               <div className="slider-group">
                 <div className="slider-header">
-                  <span className="slider-name">Neuropathic Jaw/Cheek Pain</span>
+                  <label htmlFor="symptom-pain" className="slider-name">Pain Level</label>
                   <span className="slider-val">{pain}/10</span>
                 </div>
                 <input 
+                  id="symptom-pain"
                   type="range" min="1" max="10" 
                   className="range-input" 
                   value={pain} 
                   onChange={(e) => setPain(parseInt(e.target.value))} 
+                  title="Pain Level"
                 />
               </div>
 
-              <div className="slider-group">
-                <div className="slider-header">
-                  <span className="slider-name">Dry Mouth (Xerostomia)</span>
-                  <span className="slider-val">{dryMouth}/10</span>
-                </div>
+              <div className="form-group">
+                <label htmlFor="symptom-pain-location" className="form-label">Pain Location</label>
                 <input 
-                  type="range" min="1" max="10" 
-                  className="range-input" 
-                  value={dryMouth} 
-                  onChange={(e) => setDryMouth(parseInt(e.target.value))} 
+                  id="symptom-pain-location"
+                  type="text" 
+                  className="form-input" 
+                  placeholder="e.g., Right jaw, cheek, neck" 
+                  value={painLocation} 
+                  onChange={(e) => setPainLocation(e.target.value)} 
+                  title="Pain Location"
                 />
               </div>
 
               <div className="slider-group">
                 <div className="slider-header">
-                  <span className="slider-name">Swallowing Difficulty (Dysphagia)</span>
-                  <span className="slider-val">{swallowing}/10</span>
-                </div>
-                <input 
-                  type="range" min="1" max="10" 
-                  className="range-input" 
-                  value={swallowing} 
-                  onChange={(e) => setSwallowing(parseInt(e.target.value))} 
-                />
-              </div>
-
-              <div className="slider-group">
-                <div className="slider-header">
-                  <span className="slider-name">Facial Muscle Numbness / Weakness</span>
-                  <span className="slider-val">{numbness}/10</span>
-                </div>
-                <input 
-                  type="range" min="1" max="10" 
-                  className="range-input" 
-                  value={numbness} 
-                  onChange={(e) => setNumbness(parseInt(e.target.value))} 
-                />
-              </div>
-
-              <div className="slider-group">
-                <div className="slider-header">
-                  <span className="slider-name">General Fatigue</span>
+                  <label htmlFor="symptom-fatigue" className="slider-name">Fatigue</label>
                   <span className="slider-val">{fatigue}/10</span>
                 </div>
                 <input 
+                  id="symptom-fatigue"
                   type="range" min="1" max="10" 
                   className="range-input" 
                   value={fatigue} 
                   onChange={(e) => setFatigue(parseInt(e.target.value))} 
+                  title="Fatigue"
+                />
+              </div>
+
+              <div className="slider-group">
+                <div className="slider-header">
+                  <label htmlFor="symptom-nausea" className="slider-name">Nausea</label>
+                  <span className="slider-val">{nausea}/10</span>
+                </div>
+                <input 
+                  id="symptom-nausea"
+                  type="range" min="1" max="10" 
+                  className="range-input" 
+                  value={nausea} 
+                  onChange={(e) => setNausea(parseInt(e.target.value))} 
+                  title="Nausea"
+                />
+              </div>
+
+              <div className="slider-group">
+                <div className="slider-header">
+                  <label htmlFor="symptom-fever" className="slider-name">Fever</label>
+                  <span className="slider-val">{fever}/10</span>
+                </div>
+                <input 
+                  id="symptom-fever"
+                  type="range" min="1" max="10" 
+                  className="range-input" 
+                  value={fever} 
+                  onChange={(e) => setFever(parseInt(e.target.value))} 
+                  title="Fever"
+                />
+              </div>
+
+              <div className="slider-group">
+                <div className="slider-header">
+                  <label htmlFor="symptom-constipation" className="slider-name">Constipation</label>
+                  <span className="slider-val">{constipation}/10</span>
+                </div>
+                <input 
+                  id="symptom-constipation"
+                  type="range" min="1" max="10" 
+                  className="range-input" 
+                  value={constipation} 
+                  onChange={(e) => setConstipation(parseInt(e.target.value))} 
+                  title="Constipation"
+                />
+              </div>
+
+              <div className="slider-group">
+                <div className="slider-header">
+                  <label htmlFor="symptom-other" className="slider-name">Other Symptom Severity</label>
+                  <span className="slider-val">{other}/10</span>
+                </div>
+                <input 
+                  id="symptom-other"
+                  type="range" min="1" max="10" 
+                  className="range-input" 
+                  value={other} 
+                  onChange={(e) => setOther(parseInt(e.target.value))} 
+                  title="Other Symptom Severity"
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="symptom-other-description" className="form-label">Other Symptom Description</label>
+                <input 
+                  id="symptom-other-description"
+                  type="text" 
+                  className="form-input" 
+                  placeholder="e.g., Dry mouth, difficulty swallowing" 
+                  value={otherDescription} 
+                  onChange={(e) => setOtherDescription(e.target.value)} 
+                  title="Other Symptom Description"
                 />
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div className="form-group" style={{ height: '100%' }}>
-                <label className="form-label">Clinical Notes / Context</label>
+            <div className="form-layout-row">
+              <div className="form-group height-100">
+                <label htmlFor="symptom-notes" className="form-label">Clinical Notes / Context</label>
                 <textarea 
-                  className="form-textarea" 
-                  style={{ height: '100%', minHeight: '150px' }}
-                  placeholder="e.g., Felt sharp jaw twinges in evening. Took extra dry mouth gel before bed. Speech slightly slurred after talking for long..." 
+                  id="symptom-notes"
+                  className="form-textarea textarea-context" 
+                  placeholder="e.g., Felt mild twinges in the jaw. Stretched facial muscles..." 
                   value={notes} 
                   onChange={(e) => setNotes(e.target.value)} 
+                  title="Clinical Notes"
                 />
               </div>
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
+          <div className="form-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)}>
               Cancel
             </button>
@@ -233,41 +295,42 @@ export const Symptoms: React.FC<SymptomsProps> = ({
         {chartLogs.length >= 2 ? (
           <div className="symptom-chart-container">
             {/* Legend Toggles */}
-            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+            <div className="flex-row-wrap-gap-1rem margin-bottom-05rem">
               <button 
-                className={`filter-chip ${visibleSymptoms.pain ? 'active' : ''}`}
-                style={visibleSymptoms.pain ? { background: '#ff3366', color: '#fff', borderColor: '#ff3366' } : {}}
+                className={`filter-chip filter-chip-pain ${visibleSymptoms.pain ? 'active' : ''}`}
                 onClick={() => toggleSymptomVisibility('pain')}
               >
-                Pain (Jaw/Cheek)
+                Pain
               </button>
               <button 
-                className={`filter-chip ${visibleSymptoms.dryMouth ? 'active' : ''}`}
-                style={visibleSymptoms.dryMouth ? { background: '#00e5ff', color: '#000', borderColor: '#00e5ff' } : {}}
-                onClick={() => toggleSymptomVisibility('dryMouth')}
-              >
-                Dry Mouth (Xerostomia)
-              </button>
-              <button 
-                className={`filter-chip ${visibleSymptoms.swallowing ? 'active' : ''}`}
-                style={visibleSymptoms.swallowing ? { background: '#ffb703', color: '#000', borderColor: '#ffb703' } : {}}
-                onClick={() => toggleSymptomVisibility('swallowing')}
-              >
-                Swallowing (Dysphagia)
-              </button>
-              <button 
-                className={`filter-chip ${visibleSymptoms.numbness ? 'active' : ''}`}
-                style={visibleSymptoms.numbness ? { background: '#4facfe', color: '#fff', borderColor: '#4facfe' } : {}}
-                onClick={() => toggleSymptomVisibility('numbness')}
-              >
-                Facial Numbness
-              </button>
-              <button 
-                className={`filter-chip ${visibleSymptoms.fatigue ? 'active' : ''}`}
-                style={visibleSymptoms.fatigue ? { background: '#9d4edd', color: '#fff', borderColor: '#9d4edd' } : {}}
+                className={`filter-chip filter-chip-fatigue ${visibleSymptoms.fatigue ? 'active' : ''}`}
                 onClick={() => toggleSymptomVisibility('fatigue')}
               >
                 Fatigue
+              </button>
+              <button 
+                className={`filter-chip filter-chip-nausea ${visibleSymptoms.nausea ? 'active' : ''}`}
+                onClick={() => toggleSymptomVisibility('nausea')}
+              >
+                Nausea
+              </button>
+              <button 
+                className={`filter-chip filter-chip-fever ${visibleSymptoms.fever ? 'active' : ''}`}
+                onClick={() => toggleSymptomVisibility('fever')}
+              >
+                Fever
+              </button>
+              <button 
+                className={`filter-chip filter-chip-constipation ${visibleSymptoms.constipation ? 'active' : ''}`}
+                onClick={() => toggleSymptomVisibility('constipation')}
+              >
+                Constipation
+              </button>
+              <button 
+                className={`filter-chip filter-chip-other ${visibleSymptoms.other ? 'active' : ''}`}
+                onClick={() => toggleSymptomVisibility('other')}
+              >
+                Other
               </button>
             </div>
 
@@ -345,30 +408,6 @@ export const Symptoms: React.FC<SymptomsProps> = ({
                   points={getCoordinates(chartLogs, 'pain')} 
                 />
               )}
-              {visibleSymptoms.dryMouth && (
-                <polyline 
-                  fill="none" 
-                  stroke="#00e5ff" 
-                  strokeWidth="2.5" 
-                  points={getCoordinates(chartLogs, 'dry_mouth')} 
-                />
-              )}
-              {visibleSymptoms.swallowing && (
-                <polyline 
-                  fill="none" 
-                  stroke="#ffb703" 
-                  strokeWidth="2.5" 
-                  points={getCoordinates(chartLogs, 'swallowing_difficulty')} 
-                />
-              )}
-              {visibleSymptoms.numbness && (
-                <polyline 
-                  fill="none" 
-                  stroke="#4facfe" 
-                  strokeWidth="2.5" 
-                  points={getCoordinates(chartLogs, 'facial_numbness')} 
-                />
-              )}
               {visibleSymptoms.fatigue && (
                 <polyline 
                   fill="none" 
@@ -377,26 +416,61 @@ export const Symptoms: React.FC<SymptomsProps> = ({
                   points={getCoordinates(chartLogs, 'fatigue')} 
                 />
               )}
+              {visibleSymptoms.nausea && (
+                <polyline 
+                  fill="none" 
+                  stroke="#00cbd6" 
+                  strokeWidth="2.5" 
+                  points={getCoordinates(chartLogs, 'nausea')} 
+                />
+              )}
+              {visibleSymptoms.fever && (
+                <polyline 
+                  fill="none" 
+                  stroke="#ff5400" 
+                  strokeWidth="2.5" 
+                  points={getCoordinates(chartLogs, 'fever')} 
+                />
+              )}
+              {visibleSymptoms.constipation && (
+                <polyline 
+                  fill="none" 
+                  stroke="#d97706" 
+                  strokeWidth="2.5" 
+                  points={getCoordinates(chartLogs, 'constipation')} 
+                />
+              )}
+              {visibleSymptoms.other && (
+                <polyline 
+                  fill="none" 
+                  stroke="#64748b" 
+                  strokeWidth="2.5" 
+                  points={getCoordinates(chartLogs, 'other')} 
+                />
+              )}
 
               {/* Data points (dots) */}
               {chartLogs.length >= 2 && chartLogs.map((log, index) => {
                 const x = paddingX + (index / (chartLogs.length - 1)) * chartWidth;
                 return (
                   <g key={log.id}>
-                    {visibleSymptoms.pain && (
-                      <circle cx={x} cy={paddingY + chartHeight - ((log.pain - 1) / 9) * chartHeight} r="3.5" fill="#ff3366" />
+                    {visibleSymptoms.pain && log.pain !== undefined && log.pain !== null && (
+                      <circle cx={x} cy={paddingY + chartHeight - (((log.pain ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#ff3366" />
                     )}
-                    {visibleSymptoms.dryMouth && (
-                      <circle cx={x} cy={paddingY + chartHeight - ((log.dry_mouth - 1) / 9) * chartHeight} r="3.5" fill="#00e5ff" />
+                    {visibleSymptoms.fatigue && log.fatigue !== undefined && log.fatigue !== null && (
+                      <circle cx={x} cy={paddingY + chartHeight - (((log.fatigue ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#9d4edd" />
                     )}
-                    {visibleSymptoms.swallowing && (
-                      <circle cx={x} cy={paddingY + chartHeight - ((log.swallowing_difficulty - 1) / 9) * chartHeight} r="3.5" fill="#ffb703" />
+                    {visibleSymptoms.nausea && log.nausea !== undefined && log.nausea !== null && (
+                      <circle cx={x} cy={paddingY + chartHeight - (((log.nausea ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#00cbd6" />
                     )}
-                    {visibleSymptoms.numbness && (
-                      <circle cx={x} cy={paddingY + chartHeight - ((log.facial_numbness - 1) / 9) * chartHeight} r="3.5" fill="#4facfe" />
+                    {visibleSymptoms.fever && log.fever !== undefined && log.fever !== null && (
+                      <circle cx={x} cy={paddingY + chartHeight - (((log.fever ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#ff5400" />
                     )}
-                    {visibleSymptoms.fatigue && (
-                      <circle cx={x} cy={paddingY + chartHeight - ((log.fatigue - 1) / 9) * chartHeight} r="3.5" fill="#9d4edd" />
+                    {visibleSymptoms.constipation && log.constipation !== undefined && log.constipation !== null && (
+                      <circle cx={x} cy={paddingY + chartHeight - (((log.constipation ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#d97706" />
+                    )}
+                    {visibleSymptoms.other && log.other !== undefined && log.other !== null && (
+                      <circle cx={x} cy={paddingY + chartHeight - (((log.other ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#64748b" />
                     )}
                   </g>
                 );
@@ -404,7 +478,7 @@ export const Symptoms: React.FC<SymptomsProps> = ({
             </svg>
           </div>
         ) : (
-          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+          <div className="center-text-secondary">
             No information input yet. Need at least 2 logged symptom entries to show progression trends.
           </div>
         )}
@@ -412,31 +486,34 @@ export const Symptoms: React.FC<SymptomsProps> = ({
 
       {/* Historical Logs List */}
       <div>
-        <h3 style={{ fontSize: '1.2rem', marginBottom: '1rem' }}>Symptom Log History</h3>
+        <h3 className="font-size-1-2-margin-bottom-1rem">Symptom Log History</h3>
         
         {symptoms.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <div className="flex-col-small">
             {[...symptoms]
               .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
               .map(log => (
-                <div key={log.id} className="card" style={{ padding: '1.25rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+                <div key={log.id} className="card card-padding-1-25">
+                  <div className="flex-row-center-between-wrap">
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-cyan)', fontWeight: 600, fontSize: '0.95rem' }}>
+                      <div className="symptom-history-badge">
                         <Calendar size={15} />
                         <span>{new Date(log.date).toLocaleDateString([], { dateStyle: 'long' })}</span>
                       </div>
                       
-                      <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap', marginTop: '0.75rem', fontSize: '0.85rem' }}>
-                        <div>Pain: <strong style={{ color: log.pain > 4 ? 'var(--accent-red)' : 'var(--text-primary)' }}>{log.pain}</strong></div>
-                        <div>Dry Mouth: <strong style={{ color: log.dry_mouth > 5 ? 'var(--accent-red)' : 'var(--text-primary)' }}>{log.dry_mouth}</strong></div>
-                        <div>Swallowing: <strong>{log.swallowing_difficulty}</strong></div>
-                        <div>Numbness: <strong>{log.facial_numbness}</strong></div>
-                        <div>Fatigue: <strong>{log.fatigue}</strong></div>
+                      <div className="symptom-history-values">
+                        <div>Pain: <strong className={(log.pain ?? 0) > 4 ? 'score-elevated' : 'score-stable'}>{log.pain ?? 1}/10</strong>{log.pain_location ? ` (${log.pain_location})` : ''}</div>
+                        <div>Fatigue: <strong>{log.fatigue ?? 1}/10</strong></div>
+                        <div>Nausea: <strong>{log.nausea ?? 1}/10</strong></div>
+                        <div>Fever: <strong>{log.fever ?? 1}/10</strong></div>
+                        <div>Constipation: <strong>{log.constipation ?? 1}/10</strong></div>
+                        {log.other !== undefined && log.other !== null && (
+                          <div>Other: <strong>{log.other}/10</strong>{log.other_description ? ` (${log.other_description})` : ''}</div>
+                        )}
                       </div>
                       
                       {log.notes && (
-                        <p style={{ marginTop: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.4 }}>
+                        <p className="symptom-notes">
                           {log.notes}
                         </p>
                       )}
@@ -446,7 +523,7 @@ export const Symptoms: React.FC<SymptomsProps> = ({
               ))}
           </div>
         ) : (
-          <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+          <div className="card center-text-secondary">
             No information input yet. Click "Log Daily Symptoms" above to record today's metrics.
           </div>
         )}
