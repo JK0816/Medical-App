@@ -1,19 +1,24 @@
-import React, { useState } from 'react';
-import {   AlertTriangle, CheckCircle, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import {   AlertTriangle, CheckCircle, Plus, RefreshCw, Trash2, Edit2 } from 'lucide-react';
 import type {  Medication  } from '../types';
 
 interface MedicationsProps {
   medications: Medication[];
   fetchMedications: () => void;
   backendUrl: string;
+  showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 export const Medications: React.FC<MedicationsProps> = ({ 
   medications, 
   fetchMedications, 
-  backendUrl 
+  backendUrl,
+  showToast 
 }) => {
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+
   const [name, setName] = useState('');
   const [dosage, setDosage] = useState('');
   const [frequency, setFrequency] = useState('');
@@ -24,6 +29,24 @@ export const Medications: React.FC<MedicationsProps> = ({
   
   const [refillingId, setRefillingId] = useState<number | null>(null);
 
+  // Keyboard shortcut (Escape to close form/modal)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowForm(false);
+        setEditingId(null);
+        setDeleteConfirmId(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // useMemo for sorted medication array
+  const sortedMedications = useMemo(() => {
+    return [...medications].sort((a, b) => a.name.localeCompare(b.name));
+  }, [medications]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !dosage || !frequency) {
@@ -32,8 +55,14 @@ export const Medications: React.FC<MedicationsProps> = ({
     }
 
     try {
-      const resp = await fetch(`${backendUrl}/api/medications`, {
-        method: 'POST',
+      const isEdit = editingId !== null;
+      const url = isEdit 
+        ? `${backendUrl}/api/medications/${editingId}`
+        : `${backendUrl}/api/medications`;
+      const method = isEdit ? 'PUT' : 'POST';
+
+      const resp = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
@@ -47,6 +76,7 @@ export const Medications: React.FC<MedicationsProps> = ({
       });
       if (resp.ok) {
         fetchMedications();
+        showToast(isEdit ? 'Medication updated successfully' : 'Medication added successfully');
         // Reset
         setName('');
         setDosage('');
@@ -55,11 +85,24 @@ export const Medications: React.FC<MedicationsProps> = ({
         setEndDate('');
         setRefills('0');
         setNotes('');
+        setEditingId(null);
         setShowForm(false);
       }
     } catch (err) {
-      console.error("Failed to add medication:", err);
+      console.error("Failed to save medication:", err);
     }
+  };
+
+  const handleStartEdit = (med: Medication) => {
+    setEditingId(med.id);
+    setName(med.name);
+    setDosage(med.dosage);
+    setFrequency(med.frequency);
+    setStartDate(med.start_date || '');
+    setEndDate(med.end_date || '');
+    setRefills(med.refills_remaining.toString());
+    setNotes(med.notes || '');
+    setShowForm(true);
   };
 
   const handleRefill = async (id: number) => {
@@ -70,6 +113,7 @@ export const Medications: React.FC<MedicationsProps> = ({
       });
       if (resp.ok) {
         fetchMedications();
+        showToast('Refill logged successfully');
       } else {
         const data = await resp.json();
         alert(data.detail || "Refill failed.");
@@ -82,13 +126,13 @@ export const Medications: React.FC<MedicationsProps> = ({
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Are you sure you want to remove this medication?")) return;
     try {
       const resp = await fetch(`${backendUrl}/api/medications/${id}`, {
         method: 'DELETE'
       });
       if (resp.ok) {
         fetchMedications();
+        showToast('Medication removed');
       } else {
         const data = await resp.json();
         alert(data.detail || "Failed to delete medication.");
@@ -105,7 +149,17 @@ export const Medications: React.FC<MedicationsProps> = ({
           <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Prescription & Refill Manager</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Track dosages, scheduling, and request refill logging for critical supportive medications.</p>
         </div>
-        <button className="btn" onClick={() => setShowForm(!showForm)}>
+        <button 
+          className="btn" 
+          onClick={() => {
+            if (showForm) {
+              setShowForm(false);
+              setEditingId(null);
+            } else {
+              setShowForm(true);
+            }
+          }}
+        >
           <Plus size={18} />
           {showForm ? 'Cancel' : 'Add Medication'}
         </button>
@@ -113,7 +167,9 @@ export const Medications: React.FC<MedicationsProps> = ({
 
       {showForm && (
         <form className="card" onSubmit={handleSubmit} style={{ animation: 'slideDown 0.25s ease' }}>
-          <h3 style={{ marginBottom: '1.25rem', fontWeight: 700 }}>Record Prescription</h3>
+          <h3 style={{ marginBottom: '1.25rem', fontWeight: 700 }}>
+            {editingId !== null ? 'Edit Prescription Details' : 'Record Prescription'}
+          </h3>
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">Medication Name</label>
@@ -200,20 +256,27 @@ export const Medications: React.FC<MedicationsProps> = ({
           </div>
 
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-            <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)}>
+            <button 
+              type="button" 
+              className="btn btn-secondary" 
+              onClick={() => {
+                setShowForm(false);
+                setEditingId(null);
+              }}
+            >
               Cancel
             </button>
             <button type="submit" className="btn">
-              Save Prescription
+              {editingId !== null ? 'Save Changes' : 'Save Prescription'}
             </button>
           </div>
         </form>
       )}
 
       {/* Grid of Medications */}
-      {medications.length > 0 ? (
+      {sortedMedications.length > 0 ? (
         <div className="med-grid">
-          {medications.map(med => {
+          {sortedMedications.map(med => {
             const isLow = med.refills_remaining <= 1;
             const isExhausted = med.refills_remaining === 0;
             
@@ -242,15 +305,23 @@ export const Medications: React.FC<MedicationsProps> = ({
                         {med.frequency}
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem' }}>
                       <span className="med-dose-tag">{med.dosage}</span>
                       <button 
                         className="btn btn-secondary" 
                         style={{ padding: '0.3rem', borderRadius: '8px' }}
-                        onClick={() => handleDelete(med.id)}
+                        onClick={() => handleStartEdit(med)}
+                        title="Edit Medication"
+                      >
+                        <Edit2 size={13} style={{ color: 'var(--accent-cyan)' }} />
+                      </button>
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ padding: '0.3rem', borderRadius: '8px' }}
+                        onClick={() => setDeleteConfirmId(med.id)}
                         title="Remove Medication"
                       >
-                        <Trash2 size={14} style={{ color: 'var(--accent-red)' }} />
+                        <Trash2 size={13} style={{ color: 'var(--accent-red)' }} />
                       </button>
                     </div>
                   </div>
@@ -271,6 +342,12 @@ export const Medications: React.FC<MedicationsProps> = ({
                         <span>Last Refill:</span>
                         <span>{med.last_refill_date ? new Date(med.last_refill_date).toLocaleDateString() : 'Never logged'}</span>
                       </div>
+                      {med.created_at && (
+                        <div className="med-info-row">
+                          <span>Logged on:</span>
+                          <span>{new Date(med.created_at).toLocaleDateString()}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -313,6 +390,29 @@ export const Medications: React.FC<MedicationsProps> = ({
       ) : (
         <div className="card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
           No information input yet. Click "Add Medication" to log your first prescription.
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmId !== null && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h3 className="modal-header">Confirm Deletion</h3>
+            <p className="modal-body">Are you sure you want to delete this medication? This action cannot be undone.</p>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-secondary" onClick={() => setDeleteConfirmId(null)}>Cancel</button>
+              <button 
+                type="button" 
+                className="btn btn-danger" 
+                onClick={() => {
+                  handleDelete(deleteConfirmId);
+                  setDeleteConfirmId(null);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

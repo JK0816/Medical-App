@@ -45,12 +45,12 @@ interface DicomResult {
 }
 
 const STORAGE_KEY = 'acc_lastScanData';
-
-// Number of adjacent slices to pre-load for smooth scrolling
 const PRELOAD_RANGE = 3;
 
 export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUploaded }) => {
   const [loading, setLoading] = useState(false);
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [taskStatus, setTaskStatus] = useState<string | null>(null);
   const [scanData, setScanData] = useState<DicomResult | null>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -68,18 +68,73 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
 
   // Multi-slice navigation
   const [currentSliceIndex, setCurrentSliceIndex] = useState(0);
-  const [loadedSlices, setLoadedSlices] = useState<Set<number>>(new Set([0]));
+  const loadedSlicesRef = useRef<Set<number>>(new Set([0]));
 
-  // Persist scan data to localStorage
+  // Persist scan data to localStorage (slim version — exclude large URL arrays)
   useEffect(() => {
     if (scanData) {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(scanData));
+        // Only persist essential metadata, not the full slice URL arrays
+        const slimData = { ...scanData };
+        delete slimData.slice_image_urls;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(slimData));
       } catch {
         // localStorage might be full; silently fail
       }
     }
   }, [scanData]);
+
+  // Poll background DICOM processing task status
+  useEffect(() => {
+    if (!taskId) return;
+
+    let isMounted = true;
+    const interval = setInterval(async () => {
+      try {
+        const resp = await fetch(`${backendUrl}/api/dicom/tasks/${taskId}`);
+        if (!resp.ok) {
+          throw new Error("Failed to fetch task status");
+        }
+        const task = await resp.json();
+        if (!isMounted) return;
+
+        setTaskStatus(task.status);
+
+        if (task.status === 'Completed') {
+          clearInterval(interval);
+          setScanData(task.result);
+          // Start at middle slice for multi-slice scans (most clinically relevant)
+          if (task.result?.slice_image_urls && task.result.slice_image_urls.length > 1) {
+            setCurrentSliceIndex(Math.floor(task.result.slice_image_urls.length / 2));
+          }
+          setTaskId(null);
+          setTaskStatus(null);
+          setLoading(false);
+          onScanUploaded(); // Refresh history
+        } else if (task.status === 'Failed') {
+          clearInterval(interval);
+          setError(task.error_message || "Failed to parse and interpret scan.");
+          setTaskId(null);
+          setTaskStatus(null);
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error(err);
+        if (isMounted) {
+          clearInterval(interval);
+          setError("Error polling DICOM task status.");
+          setTaskId(null);
+          setTaskStatus(null);
+          setLoading(false);
+        }
+      }
+    }, 2000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [taskId, backendUrl]);
 
   // Get the array of all slice URLs
   const allSliceUrls = scanData?.slice_image_urls?.length 
@@ -90,28 +145,19 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
   const isMultiSlice = totalSlices > 1;
   const currentSliceUrl = allSliceUrls[currentSliceIndex] || null;
 
-  // Pre-load adjacent slices for smooth scrolling
+  // Pre-load adjacent slices for smooth scrolling (uses ref to avoid re-render loops)
   useEffect(() => {
     if (!isMultiSlice) return;
     
-    const toPreload: number[] = [];
     for (let i = -PRELOAD_RANGE; i <= PRELOAD_RANGE; i++) {
       const idx = currentSliceIndex + i;
-      if (idx >= 0 && idx < totalSlices && !loadedSlices.has(idx)) {
-        toPreload.push(idx);
-      }
-    }
-
-    if (toPreload.length > 0) {
-      const newLoaded = new Set(loadedSlices);
-      toPreload.forEach(idx => {
+      if (idx >= 0 && idx < totalSlices && !loadedSlicesRef.current.has(idx)) {
         const img = new window.Image();
         img.src = `${backendUrl}${allSliceUrls[idx]}`;
-        newLoaded.add(idx);
-      });
-      setLoadedSlices(newLoaded);
+        loadedSlicesRef.current.add(idx);
+      }
     }
-  }, [currentSliceIndex, totalSlices, isMultiSlice]);
+  }, [currentSliceIndex, totalSlices, isMultiSlice, allSliceUrls, backendUrl]);
 
   // Navigate slices
   const goToSlice = useCallback((index: number) => {
@@ -174,12 +220,12 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
       setError("Please select a valid DICOM file (.dcm) or ZIP archive (.zip).");
       return;
     }
-
     setLoading(true);
     setError(null);
     setScanData(null);
     setCurrentSliceIndex(0);
-    setLoadedSlices(new Set([0]));
+    loadedSlicesRef.current = new Set([0]);
+    setTaskStatus('Queued');
 
     const formData = new FormData();
     formData.append("file", file);
@@ -191,22 +237,20 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
       });
 
       if (resp.ok) {
-        const data: DicomResult = await resp.json();
-        setScanData(data);
-        // Start at middle slice for multi-slice scans (most clinically relevant)
-        if (data.slice_image_urls && data.slice_image_urls.length > 1) {
-          setCurrentSliceIndex(Math.floor(data.slice_image_urls.length / 2));
-        }
-        onScanUploaded(); // Refresh history
+        const data = await resp.json();
+        setTaskId(data.task_id);
+        setTaskStatus(data.status);
       } else {
         const errText = await resp.json();
-        setError(errText.detail || "Failed to process DICOM file.");
+        setError(errText.detail || "Failed to initiate DICOM upload.");
+        setLoading(false);
+        setTaskStatus(null);
       }
     } catch (err) {
       console.error(err);
       setError("Network error occurred during scan upload.");
-    } finally {
       setLoading(false);
+      setTaskStatus(null);
     }
   };
 
@@ -238,28 +282,47 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
   const clearScan = () => {
     setScanData(null);
     setCurrentSliceIndex(0);
-    setLoadedSlices(new Set([0]));
+    loadedSlicesRef.current = new Set([0]);
+    setTaskId(null);
+    setTaskStatus(null);
     localStorage.removeItem(STORAGE_KEY);
   };
 
+  // Dynamic message based on background worker state
+  const getLoadingText = () => {
+    if (taskStatus === 'Queued') return 'QUEUED IN BACKGROUND WORKER QUEUE...';
+    if (taskStatus === 'Processing') return 'RECONSTRUCTING SLICES & SCANNING ANATOMY...';
+    if (taskStatus === 'Interpreting') return 'GENERATING AI CLINICAL REPORT...';
+    return 'PROCESSING SCAN...';
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+    <div className="dicom-workstation-container">
+      <div className="dicom-header-row">
         <div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>DICOM Image Workstation</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Upload medical DICOM scans (.dcm) or ZIP archives (.zip) for slice reconstruction and multimodal clinical AI interpretation.</p>
+          <h2>DICOM Image Workstation</h2>
+          <p className="dicom-header-subtitle">Upload medical DICOM scans (.dcm) or ZIP archives (.zip) for slice reconstruction and multimodal clinical AI interpretation.</p>
         </div>
-        {scanData && (
-          <button className="btn btn-secondary" onClick={clearScan} style={{ fontSize: '0.85rem' }}>
-            New Scan
-          </button>
-        )}
+        
+        <div className="status-badge-container">
+          {taskStatus && (
+            <span className={`status-badge-inline ${taskStatus.toLowerCase()}`}>
+              {taskStatus}
+            </span>
+          )}
+          
+          {scanData && (
+            <button className="btn btn-secondary dicom-new-scan-btn" onClick={clearScan}>
+              New Scan
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
-        <div className="card" style={{ borderLeft: '4px solid var(--accent-red)', background: 'rgba(255, 51, 102, 0.05)', padding: '1rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <ShieldAlert style={{ color: 'var(--accent-red)' }} />
-          <span style={{ fontSize: '0.95rem' }}>{error}</span>
+        <div className="card dicom-error-card">
+          <ShieldAlert className="dicom-error-icon" />
+          <span className="dicom-error-text">{error}</span>
         </div>
       )}
 
@@ -267,27 +330,20 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
       <div className="scan-viewer-layout">
         {/* PACS Viewport Container */}
         <div className="dicom-viewport-container">
-          <div className="card" style={{ padding: '1rem' }}>
+          <div className="card dicom-screen-wrapper">
             <div className="dicom-screen" ref={viewportRef}>
               {loading && (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem', zIndex: 10 }}>
-                  <div className="typing-indicator" style={{ background: 'transparent', border: 'none' }}>
-                    <div className="typing-dot" style={{ backgroundColor: 'var(--accent-cyan)' }}></div>
-                    <div className="typing-dot" style={{ backgroundColor: 'var(--accent-cyan)' }}></div>
-                    <div className="typing-dot" style={{ backgroundColor: 'var(--accent-cyan)' }}></div>
+                <div className="dicom-loading-overlay">
+                  <div className="typing-indicator dicom-loading-indicator">
+                    <div className="typing-dot dicom-loading-dot"></div>
+                    <div className="typing-dot dicom-loading-dot"></div>
+                    <div className="typing-dot dicom-loading-dot"></div>
                   </div>
-                  <div style={{ color: 'var(--accent-cyan)', fontWeight: 600, fontSize: '0.95rem', letterSpacing: '0.5px' }}>
-                    RECONSTRUCTING SLICES & SCANNING ANATOMY...
+                  <div className="dicom-loading-text">
+                    {getLoadingText()}
                   </div>
                   {/* Glowing green line sliding down */}
-                  <div style={{
-                    position: 'absolute',
-                    top: 0, left: 0, right: 0,
-                    height: '2px',
-                    background: 'var(--accent-cyan)',
-                    boxShadow: '0 0 10px var(--accent-cyan)',
-                    animation: 'slideDown 2s infinite linear'
-                  }} />
+                  <div className="dicom-scan-line" />
                 </div>
               )}
 
@@ -306,9 +362,9 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
                       }}
                     />
                   ) : (
-                    <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem' }}>
-                      <p style={{ fontSize: '1rem', fontWeight: 600 }}>No Pixel Data Available</p>
-                      <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>This DICOM file does not contain renderable pixel data. Metadata has been extracted successfully.</p>
+                    <div className="dicom-empty-pixel-state">
+                      <p className="dicom-empty-pixel-title">No Pixel Data Available</p>
+                      <p className="dicom-empty-pixel-desc">This DICOM file does not contain renderable pixel data. Metadata has been extracted successfully.</p>
                     </div>
                   )}
                   
@@ -342,46 +398,23 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
 
                   {/* Multi-slice navigation overlay */}
                   {isMultiSlice && (
-                    <div style={{
-                      position: 'absolute',
-                      bottom: '8px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.5rem',
-                      background: 'rgba(0, 0, 0, 0.7)',
-                      backdropFilter: 'blur(8px)',
-                      padding: '0.35rem 0.75rem',
-                      borderRadius: '8px',
-                      zIndex: 20,
-                      border: '1px solid rgba(0, 229, 255, 0.2)'
-                    }}>
+                    <div className="dicom-navigation-overlay">
                       <button 
                         onClick={prevSlice}
                         disabled={currentSliceIndex === 0}
-                        style={{ 
-                          background: 'transparent', border: 'none', color: 'var(--accent-cyan)', 
-                          cursor: currentSliceIndex === 0 ? 'not-allowed' : 'pointer', opacity: currentSliceIndex === 0 ? 0.3 : 1,
-                          padding: '2px', display: 'flex'
-                        }}
+                        className="dicom-nav-btn"
+                        title="Previous Slice"
                       >
                         <ChevronLeft size={16} />
                       </button>
-                      <span style={{ 
-                        fontSize: '0.75rem', fontFamily: 'monospace', color: 'var(--accent-cyan)',
-                        minWidth: '80px', textAlign: 'center'
-                      }}>
+                      <span className="dicom-nav-text">
                         {currentSliceIndex + 1} / {totalSlices}
                       </span>
                       <button 
                         onClick={nextSlice}
                         disabled={currentSliceIndex === totalSlices - 1}
-                        style={{ 
-                          background: 'transparent', border: 'none', color: 'var(--accent-cyan)', 
-                          cursor: currentSliceIndex === totalSlices - 1 ? 'not-allowed' : 'pointer', opacity: currentSliceIndex === totalSlices - 1 ? 0.3 : 1,
-                          padding: '2px', display: 'flex'
-                        }}
+                        className="dicom-nav-btn"
+                        title="Next Slice"
                       >
                         <ChevronRight size={16} />
                       </button>
@@ -403,9 +436,10 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
                   <input 
                     type="file" 
                     ref={fileInputRef}
-                    style={{ display: 'none' }}
+                    className="dicom-hidden-input"
                     onChange={handleFileChange}
                     accept=".dcm,.dicom,.zip"
+                    title="Upload DICOM file"
                   />
                 </div>
               ) : null}
@@ -413,26 +447,27 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
 
             {/* Viewer Controls */}
             {scanData && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem', padding: '0.5rem' }}>
+              <div className="dicom-controls-wrapper">
                 {/* Slice slider for multi-slice scans */}
                 {isMultiSlice && (
-                  <div className="slider-group" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-                    <div className="slider-header" style={{ fontSize: '0.75rem' }}>
+                  <div className="slider-group dicom-slider-border-bottom">
+                    <div className="slider-header dicom-slider-header-small">
                       <span className="slider-name">Slice Position ({currentSliceIndex + 1} of {totalSlices})</span>
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Scroll wheel or arrow keys to navigate</span>
+                      <span className="dicom-slider-header-muted">Scroll wheel or arrow keys to navigate</span>
                     </div>
                     <input 
                       type="range" min="0" max={totalSlices - 1} step="1"
                       className="range-input" 
                       value={currentSliceIndex} 
                       onChange={(e) => goToSlice(parseInt(e.target.value))} 
+                      title="Slice Position Slider"
                     />
                   </div>
                 )}
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr) auto', gap: '1rem', alignItems: 'center' }}>
+                <div className="dicom-slider-grid-controls">
                   <div className="slider-group">
-                    <div className="slider-header" style={{ fontSize: '0.75rem' }}>
+                    <div className="slider-header dicom-slider-header-small">
                       <span className="slider-name">Zoom ({zoom.toFixed(1)}x)</span>
                     </div>
                     <input 
@@ -440,11 +475,12 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
                       className="range-input" 
                       value={zoom} 
                       onChange={(e) => setZoom(parseFloat(e.target.value))} 
+                      title="Zoom Slider"
                     />
                   </div>
 
                   <div className="slider-group">
-                    <div className="slider-header" style={{ fontSize: '0.75rem' }}>
+                    <div className="slider-header dicom-slider-header-small">
                       <span className="slider-name">Brightness ({brightness}%)</span>
                     </div>
                     <input 
@@ -452,11 +488,12 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
                       className="range-input" 
                       value={brightness} 
                       onChange={(e) => setBrightness(parseInt(e.target.value))} 
+                      title="Brightness Slider"
                     />
                   </div>
 
                   <div className="slider-group">
-                    <div className="slider-header" style={{ fontSize: '0.75rem' }}>
+                    <div className="slider-header dicom-slider-header-small">
                       <span className="slider-name">Contrast ({contrast}%)</span>
                     </div>
                     <input 
@@ -464,10 +501,11 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
                       className="range-input" 
                       value={contrast} 
                       onChange={(e) => setContrast(parseInt(e.target.value))} 
+                      title="Contrast Slider"
                     />
                   </div>
                   
-                  <button className="btn btn-secondary" onClick={resetFilters} style={{ fontSize: '0.8rem', padding: '0.4rem 0.85rem' }}>
+                  <button className="btn btn-secondary dicom-reset-filters-btn" onClick={resetFilters}>
                     Reset Filters
                   </button>
                 </div>
@@ -480,8 +518,8 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
         <div className="dicom-metadata-panel">
           {/* Metadata Card */}
           <div className="card">
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Settings size={18} style={{ color: 'var(--accent-cyan)' }} />
+            <h3 className="dicom-card-header-bold">
+              <Settings size={18} />
               DICOM Header Tags
             </h3>
             
@@ -529,54 +567,54 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
                 </tbody>
               </table>
             ) : (
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>No scan loaded. Upload a `.dcm` file to view clinical headers.</p>
+              <p className="dicom-empty-tag-text">No scan loaded. Upload a `.dcm` file to view clinical headers.</p>
             )}
           </div>
 
           {/* AI Clinical Interpretation */}
-          <div className="card" style={{ flex: 1 }}>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Eye size={18} style={{ color: 'var(--accent-cyan)' }} />
+          <div className="card flex-1">
+            <h3 className="dicom-card-header-bold">
+              <Eye size={18} />
               AI Clinical Reader Report
             </h3>
             
             {scanData?.interpretation ? (
               <div className="scan-interpretation-panel">
-                <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Clinical Impression</span>
-                  <p style={{ fontSize: '0.9rem', color: 'var(--text-primary)', marginTop: '0.2rem', fontWeight: 500, lineHeight: 1.4 }}>
+                <div className="dicom-report-section">
+                  <span className="dicom-report-label">Clinical Impression</span>
+                  <p className="dicom-report-impression">
                     {scanData.interpretation.clinical_impression}
                   </p>
                 </div>
 
                 {scanData.interpretation.mass_characteristics && (
-                  <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', fontSize: '0.85rem' }}>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Target Lesion Details</span>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', marginTop: '0.35rem' }}>
-                      <div>Size: <strong style={{ color: 'var(--accent-cyan)' }}>{scanData.interpretation.mass_characteristics.size_mm} mm</strong></div>
+                  <div className="dicom-lesion-section">
+                    <span className="dicom-report-label">Target Lesion Details</span>
+                    <div className="dicom-lesion-grid">
+                      <div>Size: <strong className="dicom-lesion-size">{scanData.interpretation.mass_characteristics.size_mm} mm</strong></div>
                       <div>Margins: <strong>{scanData.interpretation.mass_characteristics.margin_status}</strong></div>
-                      <div style={{ gridColumn: 'span 2' }}>Contrast: <strong>{scanData.interpretation.mass_characteristics.contrast_enhancement}</strong></div>
+                      <div className="dicom-lesion-span-2">Contrast: <strong>{scanData.interpretation.mass_characteristics.contrast_enhancement}</strong></div>
                     </div>
                   </div>
                 )}
 
-                <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Perineural Invasion (PNI) Risk</span>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem', lineHeight: 1.4 }}>
+                <div className="dicom-report-section">
+                  <span className="dicom-report-label">Perineural Invasion (PNI) Risk</span>
+                  <p className="dicom-report-pni">
                     {scanData.interpretation.pni_risk_assessment}
                   </p>
                 </div>
 
-                <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Primary Site Findings</span>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem', lineHeight: 1.4 }}>
+                <div className="dicom-report-section">
+                  <span className="dicom-report-label">Primary Site Findings</span>
+                  <p className="dicom-report-findings">
                     {scanData.interpretation.primary_site_findings}
                   </p>
                 </div>
 
                 <div>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Oncology Recommendations</span>
-                  <ul className="recommendations-list" style={{ marginTop: '0.35rem' }}>
+                  <span className="dicom-report-label">Oncology Recommendations</span>
+                  <ul className="recommendations-list dicom-recommendations-list-wrapper">
                     {scanData.interpretation.recommendations.map((rec, i) => (
                       <li key={i}>
                         <CheckCircle size={12} />
@@ -587,7 +625,7 @@ export const ScanViewer: React.FC<ScanViewerProps> = ({ backendUrl, onScanUpload
                 </div>
               </div>
             ) : (
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>No scan loaded. Upload a `.dcm` file to execute AI multimodal reading.</p>
+              <p className="dicom-empty-tag-text">No scan loaded. Upload a `.dcm` file to execute AI multimodal reading.</p>
             )}
           </div>
         </div>

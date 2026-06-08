@@ -13,9 +13,10 @@ interface Document {
 interface DocumentsProps {
   backendUrl: string;
   onDocumentChange?: () => void;
+  showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-export const Documents: React.FC<DocumentsProps> = ({ backendUrl, onDocumentChange }) => {
+export const Documents: React.FC<DocumentsProps> = ({ backendUrl, onDocumentChange, showToast }) => {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,21 +37,23 @@ export const Documents: React.FC<DocumentsProps> = ({ backendUrl, onDocumentChan
     }
   };
 
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+
   useEffect(() => {
     fetchDocuments();
   }, []);
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm("Are you sure you want to delete this document?")) return;
     try {
       const response = await fetch(`${backendUrl}/api/documents/${id}`, {
         method: 'DELETE',
       });
       if (!response.ok) throw new Error('Failed to delete document');
       setDocuments(docs => docs.filter(doc => doc.id !== id));
+      showToast('Document removed');
       onDocumentChange?.();
     } catch (err: any) {
-      alert("Error: " + err.message);
+      showToast("Error: " + err.message, 'error');
     }
   };
 
@@ -81,6 +84,7 @@ export const Documents: React.FC<DocumentsProps> = ({ backendUrl, onDocumentChan
       if (resp.ok) {
         // Refresh the document list to get proper server-generated data
         await fetchDocuments();
+        showToast('Document uploaded and indexed');
         onDocumentChange?.();
       } else {
         const errData = await resp.json();
@@ -184,7 +188,7 @@ export const Documents: React.FC<DocumentsProps> = ({ backendUrl, onDocumentChan
                         className="btn" 
                         style={{ padding: '0.5rem', background: 'transparent', color: 'var(--text-secondary)' }}
                         title="Delete Document"
-                        onClick={() => handleDelete(doc.id)}
+                        onClick={() => setDeleteConfirmId(doc.id)}
                       >
                         <Trash2 size={16} />
                       </button>
@@ -196,6 +200,29 @@ export const Documents: React.FC<DocumentsProps> = ({ backendUrl, onDocumentChan
           </table>
         )}
       </div>
+
+      {deleteConfirmId !== null && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h3 className="modal-header">Confirm Deletion</h3>
+            <p className="modal-body">Are you sure you want to delete this clinical document? This action cannot be undone.</p>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-secondary" onClick={() => setDeleteConfirmId(null)}>Cancel</button>
+              <button 
+                type="button" 
+                className="btn btn-danger" 
+                onClick={() => {
+                  handleDelete(deleteConfirmId);
+                  setDeleteConfirmId(null);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

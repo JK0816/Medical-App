@@ -1,20 +1,24 @@
-import { Calendar } from 'lucide-react';
-import React, { useState } from 'react';
-import { BarChart2, Plus } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Calendar, Trash2, BarChart2, Plus, Edit2 } from 'lucide-react';
 import type {  SymptomLog  } from '../types';
 
 interface SymptomsProps {
   symptoms: SymptomLog[];
   fetchSymptoms: () => void;
   backendUrl: string;
+  showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 export const Symptoms: React.FC<SymptomsProps> = ({ 
   symptoms, 
   fetchSymptoms, 
-  backendUrl 
+  backendUrl,
+  showToast 
 }) => {
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [pain, setPain] = useState(3);
   const [painLocation, setPainLocation] = useState('');
@@ -25,6 +29,19 @@ export const Symptoms: React.FC<SymptomsProps> = ({
   const [other, setOther] = useState(1);
   const [otherDescription, setOtherDescription] = useState('');
   const [notes, setNotes] = useState('');
+
+  // Keyboard shortcut (Escape to close form/modal)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowForm(false);
+        setEditingId(null);
+        setDeleteConfirmId(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Active chart toggles — persisted
   const [visibleSymptoms, setVisibleSymptoms] = useState(() => {
@@ -45,8 +62,12 @@ export const Symptoms: React.FC<SymptomsProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const resp = await fetch(`${backendUrl}/api/symptoms`, {
-        method: 'POST',
+      const isEdit = editingId !== null;
+      const url = isEdit ? `${backendUrl}/api/symptoms/${editingId}` : `${backendUrl}/api/symptoms`;
+      const method = isEdit ? 'PUT' : 'POST';
+
+      const resp = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           date,
@@ -63,9 +84,11 @@ export const Symptoms: React.FC<SymptomsProps> = ({
       });
       if (resp.ok) {
         fetchSymptoms();
+        showToast(isEdit ? 'Symptom log updated successfully' : 'Symptom log saved successfully');
         setNotes('');
         setPainLocation('');
         setOtherDescription('');
+        setEditingId(null);
         setShowForm(false);
       }
     } catch (err) {
@@ -73,8 +96,35 @@ export const Symptoms: React.FC<SymptomsProps> = ({
     }
   };
 
+  const handleStartEdit = (log: SymptomLog) => {
+    setEditingId(log.id);
+    setDate(log.date);
+    setPain(log.pain ?? 3);
+    setPainLocation(log.pain_location || '');
+    setFatigue(log.fatigue ?? 4);
+    setNausea(log.nausea ?? 1);
+    setFever(log.fever ?? 1);
+    setConstipation(log.constipation ?? 1);
+    setOther(log.other ?? 1);
+    setOtherDescription(log.other_description || '');
+    setNotes(log.notes || '');
+    setShowForm(true);
+  };
+
+  const handleDeleteSymptom = async (id: number) => {
+    try {
+      const resp = await fetch(`${backendUrl}/api/symptoms/${id}`, { method: 'DELETE' });
+      if (resp.ok) {
+        fetchSymptoms();
+        showToast('Symptom entry removed');
+      }
+    } catch (err) {
+      console.error('Failed to delete symptom:', err);
+    }
+  };
+
   // Persist chart toggles
-  React.useEffect(() => {
+  useEffect(() => {
     try {
       localStorage.setItem('acc_symptomToggles', JSON.stringify(visibleSymptoms));
     } catch {}
@@ -88,10 +138,17 @@ export const Symptoms: React.FC<SymptomsProps> = ({
   const chartWidth = width - paddingX * 2;
   const chartHeight = height - paddingY * 2;
 
-  // Filter logs for the chart (take up to the last 10 entries, sorted chronologically)
-  const chartLogs = [...symptoms]
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-    .slice(-10);
+  // useMemo for chart logs (last 10 entries chronologically)
+  const chartLogs = useMemo(() => {
+    return [...symptoms]
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .slice(-10);
+  }, [symptoms]);
+
+  // useMemo for history log display list (descending)
+  const sortedSymptoms = useMemo(() => {
+    return [...symptoms].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [symptoms]);
 
   // Map symptom values to SVG Coordinates
   const getCoordinates = (logs: SymptomLog[], valKey: keyof SymptomLog) => {
@@ -452,25 +509,44 @@ export const Symptoms: React.FC<SymptomsProps> = ({
               {/* Data points (dots) */}
               {chartLogs.length >= 2 && chartLogs.map((log, index) => {
                 const x = paddingX + (index / (chartLogs.length - 1)) * chartWidth;
+                const dateLabel = new Date(log.date).toLocaleDateString([], { month: 'short', day: 'numeric' });
                 return (
                   <g key={log.id}>
                     {visibleSymptoms.pain && log.pain !== undefined && log.pain !== null && (
-                      <circle cx={x} cy={paddingY + chartHeight - (((log.pain ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#ff3366" />
+                      <>
+                        <circle cx={x} cy={paddingY + chartHeight - (((log.pain ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#ff3366" />
+                        <title>{`Pain: ${log.pain}/10 (${dateLabel})`}</title>
+                      </>
                     )}
                     {visibleSymptoms.fatigue && log.fatigue !== undefined && log.fatigue !== null && (
-                      <circle cx={x} cy={paddingY + chartHeight - (((log.fatigue ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#9d4edd" />
+                      <>
+                        <circle cx={x} cy={paddingY + chartHeight - (((log.fatigue ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#9d4edd" />
+                        <title>{`Fatigue: ${log.fatigue}/10 (${dateLabel})`}</title>
+                      </>
                     )}
                     {visibleSymptoms.nausea && log.nausea !== undefined && log.nausea !== null && (
-                      <circle cx={x} cy={paddingY + chartHeight - (((log.nausea ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#00cbd6" />
+                      <>
+                        <circle cx={x} cy={paddingY + chartHeight - (((log.nausea ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#00cbd6" />
+                        <title>{`Nausea: ${log.nausea}/10 (${dateLabel})`}</title>
+                      </>
                     )}
                     {visibleSymptoms.fever && log.fever !== undefined && log.fever !== null && (
-                      <circle cx={x} cy={paddingY + chartHeight - (((log.fever ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#ff5400" />
+                      <>
+                        <circle cx={x} cy={paddingY + chartHeight - (((log.fever ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#ff5400" />
+                        <title>{`Fever: ${log.fever}/10 (${dateLabel})`}</title>
+                      </>
                     )}
                     {visibleSymptoms.constipation && log.constipation !== undefined && log.constipation !== null && (
-                      <circle cx={x} cy={paddingY + chartHeight - (((log.constipation ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#d97706" />
+                      <>
+                        <circle cx={x} cy={paddingY + chartHeight - (((log.constipation ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#d97706" />
+                        <title>{`Constipation: ${log.constipation}/10 (${dateLabel})`}</title>
+                      </>
                     )}
                     {visibleSymptoms.other && log.other !== undefined && log.other !== null && (
-                      <circle cx={x} cy={paddingY + chartHeight - (((log.other ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#64748b" />
+                      <>
+                        <circle cx={x} cy={paddingY + chartHeight - (((log.other ?? 1) - 1) / 9) * chartHeight} r="3.5" fill="#64748b" />
+                        <title>{`Other: ${log.other}/10 (${dateLabel})`}</title>
+                      </>
                     )}
                   </g>
                 );
@@ -488,39 +564,60 @@ export const Symptoms: React.FC<SymptomsProps> = ({
       <div>
         <h3 className="font-size-1-2-margin-bottom-1rem">Symptom Log History</h3>
         
-        {symptoms.length > 0 ? (
+        {sortedSymptoms.length > 0 ? (
           <div className="flex-col-small">
-            {[...symptoms]
-              .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-              .map(log => (
-                <div key={log.id} className="card card-padding-1-25">
-                  <div className="flex-row-center-between-wrap">
-                    <div>
-                      <div className="symptom-history-badge">
-                        <Calendar size={15} />
-                        <span>{new Date(log.date).toLocaleDateString([], { dateStyle: 'long' })}</span>
-                      </div>
-                      
-                      <div className="symptom-history-values">
-                        <div>Pain: <strong className={(log.pain ?? 0) > 4 ? 'score-elevated' : 'score-stable'}>{log.pain ?? 1}/10</strong>{log.pain_location ? ` (${log.pain_location})` : ''}</div>
-                        <div>Fatigue: <strong>{log.fatigue ?? 1}/10</strong></div>
-                        <div>Nausea: <strong>{log.nausea ?? 1}/10</strong></div>
-                        <div>Fever: <strong>{log.fever ?? 1}/10</strong></div>
-                        <div>Constipation: <strong>{log.constipation ?? 1}/10</strong></div>
-                        {log.other !== undefined && log.other !== null && (
-                          <div>Other: <strong>{log.other}/10</strong>{log.other_description ? ` (${log.other_description})` : ''}</div>
-                        )}
-                      </div>
-                      
-                      {log.notes && (
-                        <p className="symptom-notes">
-                          {log.notes}
-                        </p>
+            {sortedSymptoms.map(log => (
+              <div key={log.id} className="card card-padding-1-25">
+                <div className="flex-row-center-between-wrap">
+                  <div style={{ flex: 1 }}>
+                    <div className="symptom-history-badge">
+                      <Calendar size={15} />
+                      <span>{new Date(log.date).toLocaleDateString([], { dateStyle: 'long' })}</span>
+                    </div>
+                    
+                    <div className="symptom-history-values">
+                      <div>Pain: <strong className={(log.pain ?? 0) > 4 ? 'score-elevated' : 'score-stable'}>{log.pain ?? 1}/10</strong>{log.pain_location ? ` (${log.pain_location})` : ''}</div>
+                      <div>Fatigue: <strong>{log.fatigue ?? 1}/10</strong></div>
+                      <div>Nausea: <strong>{log.nausea ?? 1}/10</strong></div>
+                      <div>Fever: <strong>{log.fever ?? 1}/10</strong></div>
+                      <div>Constipation: <strong>{log.constipation ?? 1}/10</strong></div>
+                      {log.other !== undefined && log.other !== null && (
+                        <div>Other: <strong>{log.other}/10</strong>{log.other_description ? ` (${log.other_description})` : ''}</div>
                       )}
                     </div>
+                    
+                    {log.notes && (
+                      <p className="symptom-notes">
+                        {log.notes}
+                      </p>
+                    )}
+                    {log.created_at && (
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                        Logged on: {new Date(log.created_at).toLocaleDateString()}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.4rem', alignSelf: 'flex-start', marginLeft: '1rem' }}>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ padding: '0.35rem', borderRadius: '8px' }}
+                      onClick={() => handleStartEdit(log)}
+                      title="Edit this symptom entry"
+                    >
+                      <Edit2 size={14} style={{ color: 'var(--accent-cyan)' }} />
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ padding: '0.35rem', borderRadius: '8px' }}
+                      onClick={() => setDeleteConfirmId(log.id)}
+                      title="Delete this symptom entry"
+                    >
+                      <Trash2 size={14} style={{ color: 'var(--accent-red)' }} />
+                    </button>
                   </div>
                 </div>
-              ))}
+              </div>
+            ))}
           </div>
         ) : (
           <div className="card center-text-secondary">
@@ -528,6 +625,30 @@ export const Symptoms: React.FC<SymptomsProps> = ({
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmId !== null && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h3 className="modal-header">Confirm Deletion</h3>
+            <p className="modal-body">Are you sure you want to delete this symptom entry? This action cannot be undone.</p>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-secondary" onClick={() => setDeleteConfirmId(null)}>Cancel</button>
+              <button 
+                type="button" 
+                className="btn btn-danger" 
+                onClick={() => {
+                  handleDeleteSymptom(deleteConfirmId);
+                  setDeleteConfirmId(null);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

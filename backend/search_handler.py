@@ -100,26 +100,32 @@ def scrape_page_content(url: str) -> str:
         logger.error(f"Error scraping {url}: {str(e)}")
         return ""
 
+from concurrent.futures import ThreadPoolExecutor
+
 def get_web_context(query: str, max_pages: int = 3) -> list:
     """
     Runs a search, scrapes the top pages, and returns:
     [{'title': ..., 'url': ..., 'content': ..., 'snippet': ...}]
     """
     search_results = search_ddg(query, num_results=max_pages + 2)
-    scraped_data = []
     
-    pages_scraped = 0
-    for res in search_results:
-        if pages_scraped >= max_pages:
-            break
+    # Filter search results first to get valid URLs to scrape
+    valid_results = [
+        res for res in search_results
+        if not res["url"].lower().endswith((".pdf", ".doc", ".docx", ".zip"))
+    ][:max_pages]
+    
+    if not valid_results:
+        return []
         
-        # Skip PDF files or direct document links for ease of HTML parsing
-        if res["url"].lower().endswith((".pdf", ".doc", ".docx", ".zip")):
-            continue
-            
-        logger.info(f"Scraping content from: {res['url']}")
-        content = scrape_page_content(res["url"])
+    logger.info(f"Scraping {len(valid_results)} pages in parallel...")
+    
+    # Run scraping in a thread pool to avoid sequential HTTP blocking
+    with ThreadPoolExecutor(max_workers=len(valid_results)) as executor:
+        contents = list(executor.map(lambda res: scrape_page_content(res["url"]), valid_results))
         
+    scraped_data = []
+    for res, content in zip(valid_results, contents):
         if len(content) > 200:
             scraped_data.append({
                 "title": res["title"],
@@ -127,7 +133,6 @@ def get_web_context(query: str, max_pages: int = 3) -> list:
                 "content": content,
                 "snippet": res["snippet"]
             })
-            pages_scraped += 1
         else:
             # Fallback to snippet if scraping fails or is blocked
             scraped_data.append({
@@ -136,9 +141,9 @@ def get_web_context(query: str, max_pages: int = 3) -> list:
                 "content": res["snippet"],
                 "snippet": res["snippet"]
             })
-            pages_scraped += 1
             
     return scraped_data
+
 
 if __name__ == "__main__":
     # Quick debug

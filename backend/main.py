@@ -1,5 +1,5 @@
 # pyrefly: ignore [missing-import]
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -45,42 +45,77 @@ app.mount("/static", StaticFiles(directory=UPLOADS_DIR), name="static")
 
 # --- Pydantic Schemas ---
 class AppointmentCreate(BaseModel):
-    title: str
-    date: str
-    doctor: Optional[str] = None
-    location: Optional[str] = None
-    notes: Optional[str] = None
+    title: str = Field(..., max_length=200)
+    date: str = Field(..., max_length=20)
+    doctor: Optional[str] = Field(None, max_length=200)
+    location: Optional[str] = Field(None, max_length=300)
+    notes: Optional[str] = Field(None, max_length=2000)
+
+class AppointmentUpdate(BaseModel):
+    title: Optional[str] = Field(None, max_length=200)
+    date: Optional[str] = Field(None, max_length=20)
+    doctor: Optional[str] = Field(None, max_length=200)
+    location: Optional[str] = Field(None, max_length=300)
+    notes: Optional[str] = Field(None, max_length=2000)
 
 class MedicationCreate(BaseModel):
-    name: str
-    dosage: str
-    frequency: str
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
+    name: str = Field(..., max_length=200)
+    dosage: str = Field(..., max_length=100)
+    frequency: str = Field(..., max_length=200)
+    start_date: Optional[str] = Field(None, max_length=20)
+    end_date: Optional[str] = Field(None, max_length=20)
     refills_remaining: Optional[int] = 0
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=2000)
+
+class MedicationUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=200)
+    dosage: Optional[str] = Field(None, max_length=100)
+    frequency: Optional[str] = Field(None, max_length=200)
+    start_date: Optional[str] = Field(None, max_length=20)
+    end_date: Optional[str] = Field(None, max_length=20)
+    refills_remaining: Optional[int] = None
+    notes: Optional[str] = Field(None, max_length=2000)
 
 class SymptomCreate(BaseModel):
-    date: str
+    date: str = Field(..., max_length=20)
     pain: Optional[int] = Field(None, ge=1, le=10)
-    pain_location: Optional[str] = None
+    pain_location: Optional[str] = Field(None, max_length=200)
     fatigue: Optional[int] = Field(None, ge=1, le=10)
     nausea: Optional[int] = Field(None, ge=1, le=10)
     fever: Optional[int] = Field(None, ge=1, le=10)
     constipation: Optional[int] = Field(None, ge=1, le=10)
     other: Optional[int] = Field(None, ge=1, le=10)
-    other_description: Optional[str] = None
-    notes: Optional[str] = None
+    other_description: Optional[str] = Field(None, max_length=500)
+    notes: Optional[str] = Field(None, max_length=2000)
+
+class SymptomUpdate(BaseModel):
+    date: Optional[str] = Field(None, max_length=20)
+    pain: Optional[int] = Field(None, ge=1, le=10)
+    pain_location: Optional[str] = Field(None, max_length=200)
+    fatigue: Optional[int] = Field(None, ge=1, le=10)
+    nausea: Optional[int] = Field(None, ge=1, le=10)
+    fever: Optional[int] = Field(None, ge=1, le=10)
+    constipation: Optional[int] = Field(None, ge=1, le=10)
+    other: Optional[int] = Field(None, ge=1, le=10)
+    other_description: Optional[str] = Field(None, max_length=500)
+    notes: Optional[str] = Field(None, max_length=2000)
 
 class TimelineEventCreate(BaseModel):
-    event_date: str
-    event_type: str # "Diagnosis", "Surgery", "Radiation", "Scan", "Medication Change", "Other"
-    title: str
-    description: Optional[str] = None
+    event_date: str = Field(..., max_length=20)
+    event_type: str = Field(..., max_length=50) # "Diagnosis", "Surgery", "Radiation", "Scan", "Medication Change", "Other"
+    title: str = Field(..., max_length=300)
+    description: Optional[str] = Field(None, max_length=5000)
     details_json: Optional[str] = None # Expecting a JSON-serialized string
 
+class TimelineEventUpdate(BaseModel):
+    event_date: Optional[str] = Field(None, max_length=20)
+    event_type: Optional[str] = Field(None, max_length=50)
+    title: Optional[str] = Field(None, max_length=300)
+    description: Optional[str] = Field(None, max_length=5000)
+    details_json: Optional[str] = None
+
 class ChatRequest(BaseModel):
-    query: str
+    query: str = Field(..., max_length=5000)
     search_web: bool
     search_records: bool
 
@@ -111,6 +146,24 @@ def delete_appointment(id: int, conn: sqlite3.Connection = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Appointment not found")
     conn.commit()
     return {"message": "Appointment deleted"}
+
+@app.put("/api/appointments/{id}")
+def update_appointment(id: int, item: AppointmentUpdate, conn: sqlite3.Connection = Depends(get_db)):
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM appointments WHERE id = ?", (id,))
+    if not cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    updates = []
+    values = []
+    for field, val in item.model_dump(exclude_unset=True).items():
+        updates.append(f"{field} = ?")
+        values.append(val)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    values.append(id)
+    cursor.execute(f"UPDATE appointments SET {', '.join(updates)} WHERE id = ?", values)
+    conn.commit()
+    return {"id": id, "message": "Appointment updated"}
 
 # --- MEDICATIONS API ---
 @app.get("/api/medications")
@@ -162,6 +215,24 @@ def delete_medication(id: int, conn: sqlite3.Connection = Depends(get_db)):
     conn.commit()
     return {"message": "Medication deleted"}
 
+@app.put("/api/medications/{id}")
+def update_medication(id: int, item: MedicationUpdate, conn: sqlite3.Connection = Depends(get_db)):
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM medications WHERE id = ?", (id,))
+    if not cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Medication not found")
+    updates = []
+    values = []
+    for field, val in item.model_dump(exclude_unset=True).items():
+        updates.append(f"{field} = ?")
+        values.append(val)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    values.append(id)
+    cursor.execute(f"UPDATE medications SET {', '.join(updates)} WHERE id = ?", values)
+    conn.commit()
+    return {"id": id, "message": "Medication updated"}
+
 # --- SYMPTOMS API ---
 @app.get("/api/symptoms")
 def get_symptoms(conn: sqlite3.Connection = Depends(get_db)):
@@ -193,6 +264,24 @@ def delete_symptom(id: int, conn: sqlite3.Connection = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Symptom log not found")
     conn.commit()
     return {"message": "Symptom log deleted"}
+
+@app.put("/api/symptoms/{id}")
+def update_symptom(id: int, item: SymptomUpdate, conn: sqlite3.Connection = Depends(get_db)):
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM symptoms WHERE id = ?", (id,))
+    if not cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Symptom log not found")
+    updates = []
+    values = []
+    for field, val in item.model_dump(exclude_unset=True).items():
+        updates.append(f"{field} = ?")
+        values.append(val)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    values.append(id)
+    cursor.execute(f"UPDATE symptoms SET {', '.join(updates)} WHERE id = ?", values)
+    conn.commit()
+    return {"id": id, "message": "Symptom log updated"}
 
 # --- TIMELINE EVENTS API ---
 @app.get("/api/timeline")
@@ -243,6 +332,64 @@ def delete_timeline_event(id: int, conn: sqlite3.Connection = Depends(get_db)):
     conn.commit()
     return {"message": "Timeline event deleted"}
 
+@app.put("/api/timeline/{id}")
+def update_timeline_event(id: int, item: TimelineEventUpdate, conn: sqlite3.Connection = Depends(get_db)):
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM timeline_events WHERE id = ?", (id,))
+    if not cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Timeline event not found")
+    updates = []
+    values = []
+    for field, val in item.model_dump(exclude_unset=True).items():
+        if field == 'details_json' and val is not None:
+            try:
+                json.loads(val)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="details_json must be a valid JSON string")
+        updates.append(f"{field} = ?")
+        values.append(val)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    values.append(id)
+    cursor.execute(f"UPDATE timeline_events SET {', '.join(updates)} WHERE id = ?", values)
+    conn.commit()
+    return {"id": id, "message": "Timeline event updated"}
+
+# --- HEALTH CHECK & DATA EXPORT ---
+@app.get("/api/health")
+def health_check():
+    """Simple health check for frontend connectivity monitoring."""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
+@app.get("/api/export")
+def export_all_data(conn: sqlite3.Connection = Depends(get_db)):
+    """Exports all patient data as a structured JSON archive for backup or portability."""
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM appointments ORDER BY date ASC")
+    appointments = [dict(r) for r in cursor.fetchall()]
+    
+    cursor.execute("SELECT * FROM medications ORDER BY name ASC")
+    medications = [dict(r) for r in cursor.fetchall()]
+    
+    cursor.execute("SELECT * FROM symptoms ORDER BY date ASC")
+    symptoms = [dict(r) for r in cursor.fetchall()]
+    
+    cursor.execute("SELECT * FROM timeline_events ORDER BY event_date ASC")
+    timeline = [dict(r) for r in cursor.fetchall()]
+    
+    cursor.execute("SELECT id, filename, filetype, upload_date, summary FROM documents ORDER BY upload_date DESC")
+    documents = [dict(r) for r in cursor.fetchall()]
+    
+    return {
+        "export_date": datetime.now().isoformat(),
+        "appointments": appointments,
+        "medications": medications,
+        "symptoms": symptoms,
+        "timeline_events": timeline,
+        "documents": documents
+    }
+
 # --- DICOM IMAGING & SCAN INTERPRETATION API ---
 
 @app.get("/api/dicom/synthetic")
@@ -261,26 +408,115 @@ def download_synthetic_dicom():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate synthetic scan: {str(e)}")
 
+def process_dicom_background_task(task_id: str, filepath: str, original_filename: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # 1. Update status to 'Processing'
+        cursor.execute("UPDATE dicom_tasks SET status = 'Processing' WHERE id = ?", (task_id,))
+        conn.commit()
+        
+        # 2. Parse file
+        if original_filename.lower().endswith(".zip"):
+            import zipfile
+            extract_dir = os.path.join(UPLOADS_DIR, f"extracted_{uuid.uuid4()}")
+            os.makedirs(extract_dir, exist_ok=True)
+            try:
+                with zipfile.ZipFile(filepath, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+                parsed_data = dicom_handler.parse_dicom_directory(extract_dir)
+            finally:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+        else:
+            parsed_data = dicom_handler.parse_dicom(filepath)
+            
+        if "error" in parsed_data:
+            raise Exception(parsed_data["error"])
+            
+        # 3. Update status to 'Interpreting'
+        cursor.execute("UPDATE dicom_tasks SET status = 'Interpreting' WHERE id = ?", (task_id,))
+        conn.commit()
+        
+        # 4. Trigger Gemini interpretation
+        slice_url = parsed_data.get("slice_image_url")
+        if slice_url:
+            relative_path = slice_url.replace("/static/", "")
+            local_png_path = os.path.join(UPLOADS_DIR, relative_path)
+            report = gemini_handler.interpret_dicom(parsed_data, local_png_path)
+            parsed_data["interpretation"] = report
+        else:
+            parsed_data["interpretation"] = {"error": "Could not generate slice image for AI interpretation."}
+            
+        # 5. Log Timeline Event
+        findings = parsed_data.get("interpretation", {}).get("clinical_impression", "Scan uploaded.")
+        details = {
+            "modality": parsed_data.get("modality"),
+            "body_part": parsed_data.get("body_part"),
+            "findings": findings,
+            "patient_id": parsed_data.get("patient_id"),
+            "slice_image": slice_url
+        }
+        cursor.execute("""
+            INSERT INTO timeline_events (event_date, event_type, title, description, details_json)
+            VALUES (?, 'Scan', ?, ?, ?)
+        """, (
+            parsed_data.get("study_date", datetime.now().strftime("%Y-%m-%d")),
+            f"Uploaded {parsed_data.get('modality')} Scan",
+            parsed_data.get("study_description", "DICOM Imaging Upload"),
+            json.dumps(details)
+        ))
+        
+        # 6. Update status to 'Completed'
+        cursor.execute("""
+            UPDATE dicom_tasks 
+            SET status = 'Completed', result_json = ?
+            WHERE id = ?
+        """, (json.dumps(parsed_data), task_id))
+        conn.commit()
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        cursor.execute("""
+            UPDATE dicom_tasks 
+            SET status = 'Failed', error_message = ?
+            WHERE id = ?
+        """, (str(e), task_id))
+        conn.commit()
+    finally:
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+        except Exception as cleanup_err:
+            print(f"Failed to delete temp file {filepath}: {str(cleanup_err)}")
+        conn.close()
+
 @app.post("/api/dicom/upload")
-async def upload_dicom(file: UploadFile = File(...), conn: sqlite3.Connection = Depends(get_db)):
+async def upload_dicom(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    conn: sqlite3.Connection = Depends(get_db)
+):
     """
-    Uploads a .dcm file or a .zip of .dcm files, parses metadata, generates PNG slices, 
-    and requests Gemini to provide a clinical interpretation report.
+    Ingests a DICOM file or ZIP of files asynchronously, returning a task ID immediately.
+    Processes slice reconstruction and AI interpretation in a background queue.
     """
     if not file.filename.lower().endswith((".dcm", ".dicom", ".zip")):
         raise HTTPException(status_code=400, detail="Only DICOM (.dcm) or ZIP (.zip) files are supported.")
     
-    # Streaming size check — read and save in chunks to avoid holding
-    # the entire file in memory twice
-    filename = f"{uuid.uuid4()}_{file.filename}"
-    filepath = os.path.join(DOCS_DIR, filename)
-    max_allowed = MAX_UPLOAD_SIZE * 5  # Allow larger uploads for ZIPs
+    task_id = str(uuid.uuid4())
+    temp_dir = os.path.join(UPLOADS_DIR, "temp")
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    filename = f"{task_id}_{file.filename}"
+    filepath = os.path.join(temp_dir, filename)
+    max_allowed = MAX_UPLOAD_SIZE * 5
     
     total_bytes = 0
     try:
         with open(filepath, "wb") as buffer:
             while True:
-                chunk = await file.read(1024 * 1024)  # 1MB chunks
+                chunk = await file.read(1024 * 1024)
                 if not chunk:
                     break
                 total_bytes += len(chunk)
@@ -294,73 +530,39 @@ async def upload_dicom(file: UploadFile = File(...), conn: sqlite3.Connection = 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {str(e)}")
         
-    # Parse the DICOM file(s)
-    if file.filename.lower().endswith(".zip"):
-        import zipfile
-        extract_dir = os.path.join(UPLOADS_DIR, f"extracted_{uuid.uuid4()}")
-        os.makedirs(extract_dir, exist_ok=True)
+    # Queue task in DB
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO dicom_tasks (id, filename, status)
+        VALUES (?, ?, 'Queued')
+    """, (task_id, file.filename))
+    conn.commit()
+    
+    # Add background task
+    background_tasks.add_task(process_dicom_background_task, task_id, filepath, file.filename)
+    
+    return {"task_id": task_id, "status": "Queued"}
+
+@app.get("/api/dicom/tasks/{task_id}")
+def get_dicom_task(task_id: str, conn: sqlite3.Connection = Depends(get_db)):
+    """
+    Retrieves status and results of a background DICOM processing task.
+    """
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, filename, status, result_json, error_message FROM dicom_tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    d = dict(row)
+    if d.get("result_json"):
         try:
-            with zipfile.ZipFile(filepath, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
-            parsed_data = dicom_handler.parse_dicom_directory(extract_dir)
-        finally:
-            shutil.rmtree(extract_dir, ignore_errors=True)
-            # Clean up the original ZIP file too — it's been extracted
-            try:
-                os.remove(filepath)
-            except Exception:
-                pass
+            d["result"] = json.loads(d["result_json"])
+        except ValueError:
+            d["result"] = None
     else:
-        parsed_data = dicom_handler.parse_dicom(filepath)
-        
-    if "error" in parsed_data:
-        raise HTTPException(status_code=422, detail=parsed_data["error"])
-        
-    # Trigger Gemini multimodal interpretation
-    slice_url = parsed_data.get("slice_image_url")
-    if slice_url:
-        try:
-            # Convert relative URL back to local file path
-            relative_path = slice_url.replace("/static/", "")
-            local_png_path = os.path.join(UPLOADS_DIR, relative_path)
-            
-            # Get interpretation
-            report = gemini_handler.interpret_dicom(parsed_data, local_png_path)
-            parsed_data["interpretation"] = report
-        except Exception as e:
-            parsed_data["interpretation"] = {"error": f"AI interpretation failed: {str(e)}", "clinical_impression": "Upload succeeded, but interpretation failed."}
-    else:
-        parsed_data["interpretation"] = {"error": "Could not generate slice image for AI interpretation."}
-        
-    # Also log this scan as a Timeline Event automatically!
-    try:
-        cursor = conn.cursor()
-        
-        # Format timeline details
-        findings = parsed_data.get("interpretation", {}).get("clinical_impression", "Scan uploaded.")
-        details = {
-            "modality": parsed_data.get("modality"),
-            "body_part": parsed_data.get("body_part"),
-            "findings": findings,
-            "patient_id": parsed_data.get("patient_id"),
-            "slice_image": slice_url
-        }
-        
-        cursor.execute("""
-            INSERT INTO timeline_events (event_date, event_type, title, description, details_json)
-            VALUES (?, 'Scan', ?, ?, ?)
-        """, (
-            parsed_data.get("study_date", datetime.now().strftime("%Y-%m-%d")),
-            f"Uploaded {parsed_data.get('modality')} Scan",
-            parsed_data.get("study_description", "DICOM Imaging Upload"),
-            json.dumps(details)
-        ))
-        conn.commit()
-    except Exception as e:
-        # Don't fail the whole request if timeline logging fails
-        print(f"Failed to auto-log scan to timeline: {str(e)}")
-        
-    return parsed_data
+        d["result"] = None
+    return d
 
 # --- DOCUMENTS API ---
 @app.get("/api/documents")
@@ -381,17 +583,36 @@ async def upload_document(file: UploadFile = File(...), conn: sqlite3.Connection
     if not file.filename.lower().endswith((".txt", ".pdf")):
         raise HTTPException(status_code=400, detail="Only plain text (.txt) and PDF (.pdf) files are currently supported for documents.")
     
-    # Check file size
-    contents = await file.read()
-    if len(contents) > MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=413, detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024*1024)} MB.")
-    await file.seek(0)
-        
+    # Read file in chunks to prevent memory exhaustion from large uploads
+    temp_dir = os.path.join(DOCS_DIR, "temp")
+    os.makedirs(temp_dir, exist_ok=True)
     filename = f"{uuid.uuid4()}_{file.filename}"
-    filepath = os.path.join(DOCS_DIR, filename)
+    temp_path = os.path.join(temp_dir, filename)
+    final_path = os.path.join(DOCS_DIR, filename)
     
-    with open(filepath, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    total_bytes = 0
+    try:
+        with open(temp_path, "wb") as buffer:
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1MB chunks
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > MAX_UPLOAD_SIZE:
+                    buffer.close()
+                    os.remove(temp_path)
+                    raise HTTPException(status_code=413, detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024*1024)} MB.")
+                buffer.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {str(e)}")
+    
+    # Move to final location
+    shutil.move(temp_path, final_path)
+    filepath = final_path
         
     # Extract text content
     text_content = ""
@@ -476,28 +697,28 @@ async def upload_document(file: UploadFile = File(...), conn: sqlite3.Connection
             except Exception as e:
                 print(f"Failed to auto-insert symptom: {str(e)}")
     
+    import backend.vector_db as vector_db
+    
     # Compute embeddings in chunks
     chunk_size = 500
     overlap = 50
+    chunks = []
+    vectors = []
+    
     if len(text_content) > chunk_size:
-        all_chunks = []
         for i in range(0, len(text_content), chunk_size - overlap):
-            all_chunks.append(text_content[i:i+chunk_size])
+            chunks.append(text_content[i:i+chunk_size])
             if i + chunk_size >= len(text_content):
                 break
-                
-        for chunk in all_chunks:
-            embedding = gemini_handler.generate_embeddings(chunk)
-            cursor.execute("""
-                INSERT INTO document_embeddings (document_id, chunk_text, embedding_vector)
-                VALUES (?, ?, ?)
-            """, (doc_id, chunk, json.dumps(embedding)))
     elif text_content:
-        embedding = gemini_handler.generate_embeddings(text_content)
-        cursor.execute("""
-            INSERT INTO document_embeddings (document_id, chunk_text, embedding_vector)
-            VALUES (?, ?, ?)
-        """, (doc_id, text_content, json.dumps(embedding)))
+        chunks.append(text_content)
+        
+    for chunk in chunks:
+        embedding = gemini_handler.generate_embeddings(chunk)
+        vectors.append(embedding)
+        
+    if chunks:
+        vector_db.insert_embeddings(doc_id, chunks, vectors)
         
     conn.commit()
     return {"id": doc_id, "filename": file.filename, "message": "Document uploaded, parsed, and clinical data auto-extracted."}
@@ -516,6 +737,10 @@ def delete_document(id: int, conn: sqlite3.Connection = Depends(get_db)):
     # Delete from DB (embeddings will cascade if foreign keys are ON)
     cursor.execute("DELETE FROM documents WHERE id = ?", (id,))
     conn.commit()
+    
+    # Delete from LanceDB
+    import backend.vector_db as vector_db
+    vector_db.delete_embeddings(id)
     
     # Delete file from disk
     try:
@@ -564,7 +789,7 @@ def chat_assistant(req: ChatRequest, conn: sqlite3.Connection = Depends(get_db))
         ])
         
         # 4. Timeline Milestones (Surgeries, scans, etc.)
-        cursor.execute("SELECT event_date, event_type, title, description, details_json FROM timeline_events ORDER BY event_date DESC")
+        cursor.execute("SELECT event_date, event_type, title, description, details_json FROM timeline_events ORDER BY event_date DESC LIMIT 20")
         events = cursor.fetchall()
         events_str = "\n".join([
             f"- Event ({e['event_date']} - {e['event_type']}): {e['title']}. Description: {e['description']}. Details: {e['details_json']}"
@@ -572,45 +797,10 @@ def chat_assistant(req: ChatRequest, conn: sqlite3.Connection = Depends(get_db))
         ])
         
         # 5. Semantic Search over uploaded documents (Vector Search)
+        import backend.vector_db as vector_db
         query_vector = gemini_handler.generate_embeddings(req.query)
-        cursor.execute("SELECT id, document_id, chunk_text, embedding_vector FROM document_embeddings")
-        all_chunks = cursor.fetchall()
-        
-        # Rank chunks by cosine similarity in python
-        q_vec = np.array(query_vector)
-        norm_q = np.linalg.norm(q_vec) if q_vec.size > 0 else 0.0
-        
-        if norm_q > 0 and all_chunks and len(query_vector) == 768:
-            # Parse embeddings once and filter valid 768-dim vectors
-            parsed_chunks = []
-            for chunk in all_chunks:
-                try:
-                    vec = json.loads(chunk["embedding_vector"])
-                    if len(vec) == 768:
-                        parsed_chunks.append((chunk["chunk_text"], vec))
-                except (json.JSONDecodeError, TypeError):
-                    continue
-            
-            if not parsed_chunks:
-                ranked_chunks = [(0.0, chunk["chunk_text"]) for chunk in all_chunks]
-            else:
-                chunks_text = [pc[0] for pc in parsed_chunks]
-                c_vecs = np.array([pc[1] for pc in parsed_chunks])
-                
-                # Vectorized cosine similarity
-                dot_products = np.dot(c_vecs, q_vec)
-                norm_cs = np.linalg.norm(c_vecs, axis=1)
-                
-                valid_norms = norm_cs > 0
-                sims = np.zeros(len(c_vecs))
-                sims[valid_norms] = dot_products[valid_norms] / (norm_q * norm_cs[valid_norms])
-                
-                ranked_chunks = list(zip(sims, chunks_text))
-        else:
-            ranked_chunks = [(0.0, chunk["chunk_text"]) for chunk in all_chunks]
-            
-        ranked_chunks.sort(key=lambda x: x[0], reverse=True)
-        top_chunks = [item[1] for item in ranked_chunks[:3] if item[0] > 0.4]  # similarity threshold
+        results = vector_db.search_embeddings(query_vector, limit=3)
+        top_chunks = [item["text"] for item in results if item["_distance"] < 0.6]
         documents_str = "\n".join([f"- Doc Excerpt: {chunk}" for chunk in top_chunks])
         
         # Assemble local context text block
@@ -627,6 +817,8 @@ def chat_assistant(req: ChatRequest, conn: sqlite3.Connection = Depends(get_db))
             local_context_parts.append(f"Relevant Uploaded Records:\n{documents_str}")
             
         local_context_str = "\n\n".join(local_context_parts)
+        if len(local_context_str) > 8000:
+            local_context_str = local_context_str[:8000] + "\n\n[Context truncated due to length limits]"
             
     # Call Gemini RAG logic
     result = gemini_handler.answer_query_with_rag(

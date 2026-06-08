@@ -7,7 +7,7 @@ from contextlib import closing
 DB_PATH = os.path.join(os.path.dirname(__file__), "medical_app.db")
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
@@ -54,13 +54,23 @@ def init_db():
             )
             """)
             
-            # Check if symptoms table has all expected columns (to handle schema migration)
+            # Safe additive schema migration for symptoms table
+            # Instead of dropping the table (which destroys user data), add missing columns
             cursor.execute("PRAGMA table_info(symptoms)")
-            columns = [col[1] for col in cursor.fetchall()]
-            expected_cols = {"id", "date", "pain", "pain_location", "fatigue", "nausea", "fever", 
-                             "constipation", "other", "other_description", "notes", "created_at"}
-            if columns and (not expected_cols.issubset(set(columns)) or "dry_mouth" in columns):
-                cursor.execute("DROP TABLE symptoms")
+            existing_cols = {col[1] for col in cursor.fetchall()}
+            if existing_cols:  # Table already exists
+                migrations = {
+                    "pain_location": "TEXT",
+                    "constipation": "INTEGER CHECK(constipation BETWEEN 1 AND 10)",
+                    "other": "INTEGER CHECK(other BETWEEN 1 AND 10)",
+                    "other_description": "TEXT",
+                }
+                for col_name, col_type in migrations.items():
+                    if col_name not in existing_cols:
+                        try:
+                            cursor.execute(f"ALTER TABLE symptoms ADD COLUMN {col_name} {col_type}")
+                        except sqlite3.OperationalError:
+                            pass  # Column may already exist in a different form
 
             # 3. Symptoms Table
             cursor.execute("""
@@ -76,6 +86,18 @@ def init_db():
                 other INTEGER CHECK(other BETWEEN 1 AND 10),
                 other_description TEXT,
                 notes TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+
+            # 3.5. DICOM Tasks Table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS dicom_tasks (
+                id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                status TEXT NOT NULL, -- 'Queued', 'Processing', 'Interpreting', 'Completed', 'Failed'
+                result_json TEXT,     -- JSON string containing parsed metadata and report
+                error_message TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """)
@@ -196,11 +218,9 @@ def seed_dummy_data():
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, medications)
             
-            # Seed symptoms (v4 schema)
-            cursor.execute("SELECT value FROM app_settings WHERE key = 'symptoms_seeded_v4'")
-            row_seeded = cursor.fetchone()
-            if not row_seeded or row_seeded[0] != 'true':
-                cursor.execute("DELETE FROM symptoms")
+            # Seed symptoms
+            cursor.execute("SELECT COUNT(*) FROM symptoms")
+            if cursor.fetchone()[0] == 0:
                 symptoms = [
                     # date, pain, pain_location, fatigue, nausea, fever, constipation, other, other_description, notes
                     ("2026-05-28", 3, "Right jaw", 4, 1, 1, 2, None, None, "Jaw nerve pain managed. Slight fatigue."),
@@ -214,7 +234,9 @@ def seed_dummy_data():
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, symptoms)
-                cursor.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('symptoms_seeded_v4', 'true')")
+            
+            # Mark seed as complete — prevents re-insertion on subsequent restarts
+            cursor.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('db_seeded', 'true')")
 
 # Initialize on import
 init_db()

@@ -35,6 +35,7 @@ export const Assistant: React.FC<AssistantProps> = ({ backendUrl }) => {
   });
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   
   // Settings switches — persisted
   const [searchWeb, setSearchWeb] = useState(() => {
@@ -85,6 +86,16 @@ export const Assistant: React.FC<AssistantProps> = ({ backendUrl }) => {
     fetchDocuments();
   }, []);
 
+  // Helper to cap messages to 100, keeping welcome message at [0] if it is Ready
+  const capMessages = (prev: ChatMessage[], newMsg: ChatMessage): ChatMessage[] => {
+    const hasWelcome = prev[0]?.sender === 'assistant' && prev[0]?.mode === 'Ready';
+    const welcome = hasWelcome ? [prev[0]] : [];
+    const chatMessages = hasWelcome ? prev.slice(1) : prev;
+    const nextChat = [...chatMessages, newMsg];
+    // Keep last 99 messages to ensure total does not exceed 100 including welcome
+    return [...welcome, ...nextChat.slice(-99)];
+  };
+
   // Persist chat history to localStorage
   useEffect(() => {
     try {
@@ -123,7 +134,7 @@ export const Assistant: React.FC<AssistantProps> = ({ backendUrl }) => {
     
     // Add user message
     const userMsg: ChatMessage = { sender: 'user', text: userQuery };
-    setMessages(prev => [...prev, userMsg]);
+    setMessages(prev => capMessages(prev, userMsg));
     setLoading(true);
 
     try {
@@ -145,26 +156,26 @@ export const Assistant: React.FC<AssistantProps> = ({ backendUrl }) => {
           citations: data.citations || [],
           mode: data.mode || 'AI RAG'
         };
-        setMessages(prev => [...prev, assistantMsg]);
+        setMessages(prev => capMessages(prev, assistantMsg));
         if (data.citations && data.citations.length > 0) {
           setActiveCitations(data.citations);
         } else {
           setActiveCitations([]);
         }
       } else {
-        setMessages(prev => [...prev, {
+        setMessages(prev => capMessages(prev, {
           sender: 'assistant',
           text: 'I encountered an error querying my knowledge network. Please check backend connection.',
           mode: 'System Error'
-        }]);
+        }));
       }
     } catch (err) {
       console.error(err);
-      setMessages(prev => [...prev, {
+      setMessages(prev => capMessages(prev, {
         sender: 'assistant',
         text: 'Network error. Could not reach clinical RAG server.',
         mode: 'Offline'
-      }]);
+      }));
     } finally {
       setLoading(false);
     }
@@ -196,20 +207,14 @@ export const Assistant: React.FC<AssistantProps> = ({ backendUrl }) => {
 
       if (resp.ok) {
         const data = await resp.json();
-        setDocuments(prev => [...prev, {
-          id: data.id,
-          filename: data.filename,
-          filepath: '',
-          filetype: file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'txt',
-          summary: data.summary
-        }]);
+        await fetchDocuments();
         
         // Add clinical event system message
-        setMessages(prev => [...prev, {
+        setMessages(prev => capMessages(prev, {
           sender: 'assistant',
           text: `Successfully uploaded and processed **${file.name}**. I have index-chunked the document and computed embeddings. \n\n*Summary:* ${data.summary}`,
           mode: 'System Indexer'
-        }]);
+        }));
       } else {
         alert("Failed to upload document.");
       }
@@ -220,6 +225,7 @@ export const Assistant: React.FC<AssistantProps> = ({ backendUrl }) => {
       setUploadingDoc(false);
     }
   };
+
 
   // Convert markdown-like headers & bullets to styled HTML simply
   const renderMessageText = (text: string) => {
@@ -334,6 +340,15 @@ export const Assistant: React.FC<AssistantProps> = ({ backendUrl }) => {
               <span className="slider"></span>
             </label>
           </div>
+          
+          <button 
+            className="btn btn-secondary" 
+            style={{ width: '100%', fontSize: '0.85rem', marginTop: '1rem', color: 'var(--accent-red)', borderColor: 'rgba(225, 29, 72, 0.2)' }}
+            onClick={() => setShowClearConfirm(true)}
+            type="button"
+          >
+            Clear Chat History
+          </button>
         </div>
 
         {/* Medical Document Uploader */}
@@ -406,6 +421,34 @@ export const Assistant: React.FC<AssistantProps> = ({ backendUrl }) => {
           )}
         </div>
       </div>
+
+      {showClearConfirm && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h3 className="modal-header">Clear Chat History</h3>
+            <p className="modal-body">Are you sure you want to clear your conversation history? This cannot be undone.</p>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-secondary" onClick={() => setShowClearConfirm(false)}>Cancel</button>
+              <button 
+                type="button"
+                className="btn btn-danger" 
+                onClick={() => {
+                  setMessages([{
+                    sender: 'assistant',
+                    text: 'Hello! I am your ACC Clinical Assistant. I can answer questions about Adenoid Cystic Carcinoma (such as standard treatments, proton therapy, clinical trials, c-Kit/VEGFR inhibitors) and help analyze your medical logs.\n\nToggle **Search Records** to let me search your medical logs and uploads, or **Search Web** to fetch recent treatments online.',
+                    mode: 'Ready'
+                  }]);
+                  setActiveCitations([]);
+                  setShowClearConfirm(false);
+                }}
+              >
+                Clear History
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ShieldAlert, 
   FileText, 
@@ -9,7 +9,8 @@ import {
   Flame, 
   Info,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Edit2
 } from 'lucide-react';
 import type {  TimelineEvent  } from '../types';
 
@@ -17,12 +18,15 @@ interface TimelineProps {
   timeline: TimelineEvent[];
   fetchTimeline: () => void;
   backendUrl: string;
+  showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-export const Timeline: React.FC<TimelineProps> = ({ timeline, fetchTimeline, backendUrl }) => {
+export const Timeline: React.FC<TimelineProps> = ({ timeline, fetchTimeline, backendUrl, showToast }) => {
   const [filter, setFilter] = useState<'All' | 'Scans' | 'Treatments' | 'Diagnosis'>('All');
   const [expandedEventId, setExpandedEventId] = useState<number | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   
   // Form State
   const [eventDate, setEventDate] = useState('');
@@ -36,6 +40,19 @@ export const Timeline: React.FC<TimelineProps> = ({ timeline, fetchTimeline, bac
   const [radiationDose, setRadiationDose] = useState('');
   const [radiationFractions, setRadiationFractions] = useState('');
   const [scanFindings, setScanFindings] = useState('');
+
+  // Keyboard shortcut (Escape to close form/modal)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowAddForm(false);
+        setEditingId(null);
+        setDeleteConfirmId(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const toggleExpand = (id: number) => {
     if (expandedEventId === id) {
@@ -78,24 +95,45 @@ export const Timeline: React.FC<TimelineProps> = ({ timeline, fetchTimeline, bac
     }
   };
 
-  const filteredEvents = timeline.filter(event => {
-    if (filter === 'All') return true;
-    if (filter === 'Scans') return event.event_type === 'Scan';
-    if (filter === 'Treatments') return event.event_type === 'Surgery' || event.event_type === 'Radiation';
-    if (filter === 'Diagnosis') return event.event_type === 'Diagnosis';
-    return true;
-  });
+  // useMemo for filtered and sorted events list
+  const filteredEvents = useMemo(() => {
+    return [...timeline]
+      .filter(event => {
+        if (filter === 'All') return true;
+        if (filter === 'Scans') return event.event_type === 'Scan';
+        if (filter === 'Treatments') return event.event_type === 'Surgery' || event.event_type === 'Radiation';
+        if (filter === 'Diagnosis') return event.event_type === 'Diagnosis';
+        return true;
+      })
+      .sort((a, b) => new Date(b.event_date).getTime() - new Date(a.event_date).getTime());
+  }, [timeline, filter]);
 
-  const handleDelete = async (id: number, e: React.MouseEvent) => {
-    e.stopPropagation(); // Avoid triggering card toggle
-    if (!confirm('Are you sure you want to delete this timeline event?')) return;
+  const handleStartEdit = (event: TimelineEvent, e: React.MouseEvent) => {
+    e.stopPropagation(); // Avoid expanding card toggle
+    setEditingId(event.id);
+    setEventDate(event.event_date);
+    setEventType(event.event_type);
+    setTitle(event.title);
+    setDescription(event.description || '');
     
+    // Set details fields
+    const details = event.details || {};
+    setMarginStatus(details.margin_status || '');
+    setLymphNodes(details.lymph_nodes_cleared || '');
+    setRadiationDose(details.planned_dose_cgy || '');
+    setRadiationFractions(details.fractions || '');
+    setScanFindings(details.findings || '');
+    setShowAddForm(true);
+  };
+
+  const handleDelete = async (id: number) => {
     try {
       const resp = await fetch(`${backendUrl}/api/timeline/${id}`, {
         method: 'DELETE'
       });
       if (resp.ok) {
         fetchTimeline();
+        showToast('Timeline event removed');
         if (expandedEventId === id) setExpandedEventId(null);
       }
     } catch (err) {
@@ -131,14 +169,21 @@ export const Timeline: React.FC<TimelineProps> = ({ timeline, fetchTimeline, bac
     };
 
     try {
-      const resp = await fetch(`${backendUrl}/api/timeline`, {
-        method: 'POST',
+      const isEdit = editingId !== null;
+      const url = isEdit 
+        ? `${backendUrl}/api/timeline/${editingId}`
+        : `${backendUrl}/api/timeline`;
+      const method = isEdit ? 'PUT' : 'POST';
+
+      const resp = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       
       if (resp.ok) {
         fetchTimeline();
+        showToast(isEdit ? 'Clinical milestone updated' : 'Clinical milestone saved');
         // Reset Form
         setEventDate('');
         setEventType('Other');
@@ -149,15 +194,17 @@ export const Timeline: React.FC<TimelineProps> = ({ timeline, fetchTimeline, bac
         setRadiationDose('');
         setRadiationFractions('');
         setScanFindings('');
+        setEditingId(null);
         setShowAddForm(false);
       } else {
         const data = await resp.json();
-        alert(data.detail || "Failed to create timeline event.");
+        alert(data.detail || "Failed to save timeline event.");
       }
     } catch (err) {
-      console.error("Error creating timeline event:", err);
+      console.error("Error saving timeline event:", err);
     }
   };
+
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -189,7 +236,17 @@ export const Timeline: React.FC<TimelineProps> = ({ timeline, fetchTimeline, bac
           </button>
         </div>
 
-        <button className="btn" onClick={() => setShowAddForm(!showAddForm)}>
+        <button 
+          className="btn" 
+          onClick={() => {
+            if (showAddForm) {
+              setShowAddForm(false);
+              setEditingId(null);
+            } else {
+              setShowAddForm(true);
+            }
+          }}
+        >
           <Plus size={18} />
           {showAddForm ? 'Cancel' : 'Add Milestone'}
         </button>
@@ -197,7 +254,9 @@ export const Timeline: React.FC<TimelineProps> = ({ timeline, fetchTimeline, bac
 
       {showAddForm && (
         <form className="card" onSubmit={handleSubmit} style={{ animation: 'slideDown 0.25s ease' }}>
-          <h3 style={{ marginBottom: '1.25rem', fontWeight: 700 }}>Add Clinical Milestone</h3>
+          <h3 style={{ marginBottom: '1.25rem', fontWeight: 700 }}>
+            {editingId !== null ? 'Edit Clinical Milestone' : 'Add Clinical Milestone'}
+          </h3>
           
           <div className="form-row">
             <div className="form-group">
@@ -318,11 +377,18 @@ export const Timeline: React.FC<TimelineProps> = ({ timeline, fetchTimeline, bac
           )}
 
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-            <button type="button" className="btn btn-secondary" onClick={() => setShowAddForm(false)}>
+            <button 
+              type="button" 
+              className="btn btn-secondary" 
+              onClick={() => {
+                setShowAddForm(false);
+                setEditingId(null);
+              }}
+            >
               Cancel
             </button>
             <button type="submit" className="btn">
-              Save Milestone
+              {editingId !== null ? 'Save Changes' : 'Save Milestone'}
             </button>
           </div>
         </form>
@@ -372,10 +438,18 @@ export const Timeline: React.FC<TimelineProps> = ({ timeline, fetchTimeline, bac
                       <button 
                         className="btn btn-secondary" 
                         style={{ padding: '0.35rem', borderRadius: '8px' }}
-                        onClick={(e) => handleDelete(event.id, e)}
+                        onClick={(e) => handleStartEdit(event, e)}
+                        title="Edit Milestone"
+                      >
+                        <Edit2 size={14} style={{ color: 'var(--accent-cyan)' }} />
+                      </button>
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ padding: '0.35rem', borderRadius: '8px' }}
+                        onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(event.id); }}
                         title="Delete Milestone"
                       >
-                        <Trash2 size={15} style={{ color: 'var(--accent-red)' }} />
+                        <Trash2 size={14} style={{ color: 'var(--accent-red)' }} />
                       </button>
                       <button 
                         className="btn btn-secondary" 
@@ -387,6 +461,12 @@ export const Timeline: React.FC<TimelineProps> = ({ timeline, fetchTimeline, bac
                   </div>
                   
                   <p className="timeline-event-desc">{event.description}</p>
+
+                  {event.created_at && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                      Logged on: {new Date(event.created_at).toLocaleDateString()}
+                    </div>
+                  )}
                   
                   {/* Detailed Pane if expanded */}
                   {isExpanded && detailsKeys.length > 0 && (
@@ -436,6 +516,30 @@ export const Timeline: React.FC<TimelineProps> = ({ timeline, fetchTimeline, bac
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmId !== null && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h3 className="modal-header">Confirm Deletion</h3>
+            <p className="modal-body">Are you sure you want to delete this clinical milestone? This action cannot be undone.</p>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-secondary" onClick={() => setDeleteConfirmId(null)}>Cancel</button>
+              <button 
+                type="button" 
+                className="btn btn-danger" 
+                onClick={() => {
+                  handleDelete(deleteConfirmId);
+                  setDeleteConfirmId(null);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

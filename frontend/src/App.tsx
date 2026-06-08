@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import { Sidebar } from './components/Sidebar';
 import { Overview } from './components/Overview';
@@ -14,6 +14,13 @@ import type {  Appointment, Medication, SymptomLog, TimelineEvent  } from './typ
 
 const BACKEND_URL = 'http://127.0.0.1:8000';
 
+// Toast notification type
+interface Toast {
+  id: number;
+  message: string;
+  type: 'success' | 'error' | 'info';
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<string>(() => {
     return localStorage.getItem('acc_activeTab') || 'overview';
@@ -25,58 +32,56 @@ function App() {
   const [symptoms, setSymptoms] = useState<SymptomLog[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   
-  // Global loading/error state
+  // Global loading/error/connectivity state
   const [isLoading, setIsLoading] = useState(true);
   const [backendError, setBackendError] = useState<string | null>(null);
+  const [isBackendConnected, setIsBackendConnected] = useState(false);
+  
+  // Toast notification state
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastIdRef = useRef(0);
 
-  // Fetch functions
-  const fetchAppointments = async () => {
-    try {
-      const resp = await fetch(`${BACKEND_URL}/api/appointments`);
-      if (resp.ok) {
-        const data = await resp.json();
-        setAppointments(data);
-      }
-    } catch (err) {
-      console.error("Error fetching appointments:", err);
-    }
-  };
+  // Show a toast notification
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    const id = ++toastIdRef.current;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3500);
+  }, []);
 
-  const fetchMedications = async () => {
-    try {
-      const resp = await fetch(`${BACKEND_URL}/api/medications`);
-      if (resp.ok) {
-        const data = await resp.json();
-        setMedications(data);
-      }
-    } catch (err) {
-      console.error("Error fetching medications:", err);
+  // Fetch functions — errors propagate so the banner can display
+  const fetchAppointments = useCallback(async () => {
+    const resp = await fetch(`${BACKEND_URL}/api/appointments`);
+    if (resp.ok) {
+      const data = await resp.json();
+      setAppointments(data);
     }
-  };
+  }, []);
 
-  const fetchSymptoms = async () => {
-    try {
-      const resp = await fetch(`${BACKEND_URL}/api/symptoms`);
-      if (resp.ok) {
-        const data = await resp.json();
-        setSymptoms(data);
-      }
-    } catch (err) {
-      console.error("Error fetching symptoms:", err);
+  const fetchMedications = useCallback(async () => {
+    const resp = await fetch(`${BACKEND_URL}/api/medications`);
+    if (resp.ok) {
+      const data = await resp.json();
+      setMedications(data);
     }
-  };
+  }, []);
 
-  const fetchTimeline = async () => {
-    try {
-      const resp = await fetch(`${BACKEND_URL}/api/timeline`);
-      if (resp.ok) {
-        const data = await resp.json();
-        setTimeline(data);
-      }
-    } catch (err) {
-      console.error("Error fetching timeline:", err);
+  const fetchSymptoms = useCallback(async () => {
+    const resp = await fetch(`${BACKEND_URL}/api/symptoms`);
+    if (resp.ok) {
+      const data = await resp.json();
+      setSymptoms(data);
     }
-  };
+  }, []);
+
+  const fetchTimeline = useCallback(async () => {
+    const resp = await fetch(`${BACKEND_URL}/api/timeline`);
+    if (resp.ok) {
+      const data = await resp.json();
+      setTimeline(data);
+    }
+  }, []);
 
   // Initial Data Fetch
   useEffect(() => {
@@ -90,19 +95,69 @@ function App() {
           fetchSymptoms(),
           fetchTimeline()
         ]);
+        setIsBackendConnected(true);
       } catch {
         setBackendError('Unable to connect to the backend server. Please ensure it is running on port 8000.');
+        setIsBackendConnected(false);
       } finally {
         setIsLoading(false);
       }
     };
     loadAll();
-  }, []);
+  }, [fetchAppointments, fetchMedications, fetchSymptoms, fetchTimeline]);
+
+  // Periodic health check for sidebar sync status
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const resp = await fetch(`${BACKEND_URL}/api/health`, { signal: AbortSignal.timeout(3000) });
+        setIsBackendConnected(resp.ok);
+        if (resp.ok && backendError) {
+          setBackendError(null);
+        }
+      } catch {
+        setIsBackendConnected(false);
+      }
+    };
+    
+    const interval = setInterval(checkHealth, 15000);
+    return () => clearInterval(interval);
+  }, [backendError]);
 
   // Persist active tab to localStorage
   useEffect(() => {
     localStorage.setItem('acc_activeTab', activeTab);
   }, [activeTab]);
+
+  // Stable callbacks for child components
+  const onScanUploaded = useCallback(() => {
+    fetchTimeline();
+  }, [fetchTimeline]);
+
+  const onDocumentChange = useCallback(() => {
+    fetchTimeline();
+    fetchSymptoms();
+  }, [fetchTimeline, fetchSymptoms]);
+
+  const handleExport = useCallback(async () => {
+    try {
+      const resp = await fetch(`${BACKEND_URL}/api/export`);
+      if (!resp.ok) throw new Error('Failed to export data');
+      const data = await resp.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `acc_carepath_backup_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showToast('Backup downloaded successfully', 'success');
+    } catch (err: any) {
+      showToast('Failed to export data: ' + err.message, 'error');
+    }
+  }, [showToast]);
 
   const getPageTitleAndSubtitle = () => {
     switch (activeTab) {
@@ -131,7 +186,7 @@ function App() {
 
   return (
     <div className="app-container">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} isConnected={isBackendConnected} onExport={handleExport} />
       
       <main className="main-content">
         <div className="page-title-container">
@@ -175,6 +230,7 @@ function App() {
             timeline={timeline}
             fetchTimeline={fetchTimeline}
             backendUrl={BACKEND_URL}
+            showToast={showToast}
           />
         )}
 
@@ -183,6 +239,7 @@ function App() {
             appointments={appointments}
             fetchAppointments={fetchAppointments}
             backendUrl={BACKEND_URL}
+            showToast={showToast}
           />
         )}
 
@@ -191,6 +248,7 @@ function App() {
             medications={medications}
             fetchMedications={fetchMedications}
             backendUrl={BACKEND_URL}
+            showToast={showToast}
           />
         )}
 
@@ -199,24 +257,22 @@ function App() {
             symptoms={symptoms}
             fetchSymptoms={fetchSymptoms}
             backendUrl={BACKEND_URL}
+            showToast={showToast}
           />
         )}
 
         {activeTab === 'scans' && (
           <ScanViewer 
             backendUrl={BACKEND_URL}
-            onScanUploaded={() => {
-              fetchTimeline(); // Automatically update timeline on new scan upload
-            }}
+            onScanUploaded={onScanUploaded}
           />
         )}
 
         {activeTab === 'documents' && (
           <Documents 
             backendUrl={BACKEND_URL}
-            onDocumentChange={() => {
-              fetchTimeline(); // Documents can auto-extract timeline events
-            }}
+            onDocumentChange={onDocumentChange}
+            showToast={showToast}
           />
         )}
 
@@ -224,6 +280,16 @@ function App() {
           <Assistant backendUrl={BACKEND_URL} />
         )}
       </main>
+
+      {/* Toast Notifications */}
+      <div className="toast-container">
+        {toasts.map(toast => (
+          <div key={toast.id} className={`toast toast-${toast.type}`}>
+            <span>{toast.type === 'success' ? '✓' : toast.type === 'error' ? '✗' : 'ℹ'}</span>
+            <span>{toast.message}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

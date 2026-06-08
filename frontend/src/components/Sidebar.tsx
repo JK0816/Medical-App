@@ -1,4 +1,4 @@
-import { Activity, GitCommit, Calendar, Pill, FileText, ShieldAlert } from 'lucide-react';
+import { Activity, GitCommit, Calendar, Pill, FileText, ShieldAlert, Database } from 'lucide-react';
 import React from 'react';
 import { 
    
@@ -9,9 +9,11 @@ import {
 interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  isConnected: boolean;
+  onExport: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isConnected, onExport }) => {
   const menuItems = [
     { id: 'overview', label: 'Overview', icon: Activity },
     { id: 'timeline', label: 'Clinical Timeline', icon: GitCommit },
@@ -51,8 +53,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
       <div className="sidebar-footer">
         <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>ACC Tracker v1.2</div>
         <div>Local Secure Mode</div>
-        <div>Sync Status: Connected</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <span className={`sync-dot ${isConnected ? 'connected' : 'disconnected'}`}></span>
+          <span>Sync: {isConnected ? 'Connected' : 'Disconnected'}</span>
+        </div>
+        <button className="btn-backup" onClick={onExport} title="Download database backup file">
+          <Database size={13} />
+          <span>Export Backup</span>
+        </button>
       </div>
     </aside>
   );
 };
+
